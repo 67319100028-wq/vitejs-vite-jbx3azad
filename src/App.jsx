@@ -4,7 +4,8 @@ import {
   Map, X, Activity, ClipboardList, MessageSquare, AlignLeft,
   Home as HomeIcon, History, ChevronLeft, ChevronRight, Clock,
   Briefcase, Tag, ZoomIn, ExternalLink, Navigation, UserCheck,
-  Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard
+  Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard,
+  Eye, EyeOff // <--- เพิ่มไอคอนลูกตากลับเข้ามาตรงนี้ครับ!
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -92,7 +93,7 @@ function MainApp() {
     { code: 'R13', desc: 'ไม่พบที่ตั้ง' },
   ];
 
-  // --- Auto-Login แบบปลอดภัย (ไม่ให้จอขาวถ้าข้อมูลเก่าตีกัน) ---
+  // --- Auto-Login แบบปลอดภัย ---
   useEffect(() => {
     const savedUser = localStorage.getItem('fieldCollectorUser');
     if (savedUser) {
@@ -103,7 +104,6 @@ function MainApp() {
           setView('home');
         }
       } catch(e) { 
-        // ถ้าข้อมูลเก่าเป็นแค่ String ธรรมดา จะพยายามสร้างเป็น Object ใหม่
         setCurrentUser({ emp_id: savedUser, username: savedUser });
         setView('home');
       }
@@ -651,7 +651,7 @@ function MainApp() {
 }
 
 // ==========================================
-// 2. ERROR BOUNDARY COMPONENT (กันแอปตายจอขาว)
+// 2. ERROR BOUNDARY COMPONENT
 // ==========================================
 class ErrorBoundary extends React.Component {
   constructor(props) {
