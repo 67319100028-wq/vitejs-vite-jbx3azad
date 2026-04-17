@@ -1,30 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Map,
-  MapPin,
-  Camera,
-  Mic,
-  CheckCircle2,
-  ChevronRight,
-  ChevronLeft,
-  History,
-  LogOut,
-  AlertCircle,
-  UserCircle,
-  Lock,
-  LogIn,
-  Search,
-  CheckSquare,
-  Square,
-  X,
-  Eye,
-  EyeOff,
-  IdCard,
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Camera, MapPin, Save, CheckCircle2, AlertCircle, User, FileText,
+  Map, X, Activity, ClipboardList, MessageSquare, AlignLeft,
+  Home as HomeIcon, History, ChevronLeft, ChevronRight, Clock,
+  Briefcase, Tag, ZoomIn, ExternalLink, Navigation, UserCheck,
+  Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard
 } from 'lucide-react';
 
-// --- Firebase Configuration (ใช้ตัวเดิมที่คุณ King มี) ---
-import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, push, onValue } from 'firebase/database';
+// --- Firebase Configuration ---
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, set, push, onValue } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAvusDVNPbek2aikLxPn-jQY_oijWphD-I',
@@ -36,365 +21,682 @@ const firebaseConfig = {
   appId: '1:658973162849:web:98d31445e9d50cd70ad920',
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+// ป้องกันแอปแครชถ้า Firebase มีปัญหา
+let app, db;
+try {
+  app = initializeApp(firebaseConfig);
+  db = getDatabase(app);
+} catch (error) {
+  console.error("Firebase Initialization Error:", error);
+}
 
-const App = () => {
-  // --- States ---
-  const [view, setView] = useState('login'); // login, home, detail
+// ข้อมูลจำลอง (Mock Data)
+const initialTasks = [
+  {
+    id: 'TASK-001', name: 'นาย สมชาย ใจดี', contractNo: 'CTR-2023-00921',
+    assetType: 'รถยนต์ (Honda Civic)', plateNumber: '1กข 9999 กรุงเทพมหานคร',
+    dept: 'AY', address: '123/45 หมู่ 6 ถ.สุขุมวิท ต.บางเมือง อ.เมือง จ.สมุทรปราการ', outstanding: '15,400.00 THB'
+  },
+  {
+    id: 'TASK-002', name: 'นาง สมศรี มีทรัพย์', contractNo: 'CTR-2023-01055',
+    assetType: 'รถจักรยานยนต์ (Yamaha Grand Filano)', plateNumber: '2ขค 5555 เชียงใหม่',
+    dept: 'TTB', address: '88/9 ซอยพหลโยธิน 48 แขวงอนุสาวรีย์ เขตบางเขน กรุงเทพมหานคร', outstanding: '8,200.00 THB'
+  }
+];
+
+const deptOptions = ["ทั้งหมด", "IT", "AY", "TLT", "SKL", "TTB", "KK", "LEGAL", "NTL", "BAY"];
+
+// ==========================================
+// 1. MAIN APP COMPONENT
+// ==========================================
+function MainApp() {
+  const [view, setView] = useState('login'); 
   const [currentUser, setCurrentUser] = useState(null);
+  
   const [loginEmpId, setLoginEmpId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const [pendingTasks, setPendingTasks] = useState([]);
+  const [selectedDept, setSelectedDept] = useState('ทั้งหมด');
   const [activeTask, setActiveTask] = useState(null);
+  const [selectedHistoryTask, setSelectedHistoryTask] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  const [pendingTasks, setPendingTasks] = useState(initialTasks);
+  const [historyTasks, setHistoryTasks] = useState([]);
 
-  const [photos, setPhotos] = useState([]);
-  const [taskNote, setTaskNote] = useState('');
   const [resultCode, setResultCode] = useState('');
   const [location, setLocation] = useState(null);
+  const [locationError, setLocationError] = useState('');
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [photos, setPhotos] = useState([]); 
+  const [taskNote, setTaskNote] = useState(''); 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
+  const [viewingPhoto, setViewingPhoto] = useState(null);
   const fileInputRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const [listeningField, setListeningField] = useState(null);
 
   const resultOptions = [
-    { code: 'DONE', desc: 'ดำเนินการเรียบร้อย' },
-    { code: 'NOT_FOUND', desc: 'ไม่พบเป้าหมาย' },
-    { code: 'REJECTED', desc: 'ปฏิเสธ/ไม่ยินยอม' },
-    { code: 'CLOSED', desc: 'สถานที่ปิด/ร้าง' },
+    { code: 'R01', desc: 'จบหน้างาน / ยึดรถ' },
+    { code: 'R02', desc: 'จบหน้างาน / ชำระแล้ว' },
+    { code: 'R06', desc: 'นัดชำระ' },
+    { code: 'R08', desc: 'พบที่ตั้ง / พบรถ' },
+    { code: 'R09', desc: 'พบที่ตั้ง / ไม่พบรถ' },
+    { code: 'R10', desc: 'ย้ายออก / ลาออก' },
+    { code: 'R11', desc: 'บ้านร้าง' },
+    { code: 'R13', desc: 'ไม่พบที่ตั้ง' },
   ];
 
-  // --- Auto Login ---
+  // --- Auto-Login แบบปลอดภัย (ไม่ให้จอขาวถ้าข้อมูลเก่าตีกัน) ---
   useEffect(() => {
-    const saved = localStorage.getItem('fieldCollectorUser');
-    if (saved) {
-      setCurrentUser(JSON.parse(saved));
-      setView('home');
+    const savedUser = localStorage.getItem('fieldCollectorUser');
+    if (savedUser) {
+      try {
+        const userObj = JSON.parse(savedUser);
+        if (userObj && userObj.emp_id) {
+          setCurrentUser(userObj);
+          setView('home');
+        }
+      } catch(e) { 
+        // ถ้าข้อมูลเก่าเป็นแค่ String ธรรมดา จะพยายามสร้างเป็น Object ใหม่
+        setCurrentUser({ emp_id: savedUser, username: savedUser });
+        setView('home');
+      }
     }
   }, []);
 
-  // --- ดึงงานเมื่อเข้าหน้า Home ---
+  // --- Fetch Data from Firebase ---
   useEffect(() => {
-    if (currentUser) {
-      onValue(ref(db, 'pending_tasks'), (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          setPendingTasks(
-            Object.keys(data).map((k) => ({ id: k, ...data[k] }))
-          );
-        } else {
-          setPendingTasks([]);
-        }
-      });
+    if (currentUser && db) {
+      try {
+        const tasksRef = ref(db, 'pending_tasks');
+        onValue(tasksRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setPendingTasks(Object.keys(data).map(key => ({ id: key, ...data[key] })));
+          } else {
+            setPendingTasks(initialTasks);
+          }
+        });
+
+        const historyRef = ref(db, 'history_tasks');
+        onValue(historyRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            const list = Object.keys(data).map(key => ({ dbId: key, ...data[key] })).reverse();
+            setHistoryTasks(list);
+          } else {
+            setHistoryTasks([]);
+          }
+        });
+      } catch (err) {
+        console.error("Fetch Data Error:", err);
+      }
     }
   }, [currentUser]);
 
-  // --- Handlers ---
+  const toggleVoiceInput = (field, setter, append = false) => {
+    if (listeningField === field) {
+      recognitionRef.current?.stop();
+      setListeningField(null);
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('เบราว์เซอร์ของคุณไม่รองรับระบบสั่งงานด้วยเสียง');
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'th-TH';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.onstart = () => setListeningField(field);
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        if (append) setter(prev => prev ? prev + ' ' + transcript : transcript);
+        else setter(transcript);
+      };
+      recognition.onerror = () => setListeningField(null);
+      recognition.onend = () => setListeningField(null);
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (error) { setListeningField(null); }
+  };
+
+  useEffect(() => { return () => recognitionRef.current?.stop(); }, []);
+
   const handleLogin = (e) => {
     e.preventDefault();
-    onValue(
-      ref(db, 'user'),
-      (snapshot) => {
-        const users = snapshot.val();
-        const found = Object.values(users || {}).find(
-          (u) => u.emp_id === loginEmpId && u.password === loginPassword
+    if (!loginEmpId.trim() || !loginPassword.trim()) {
+      setLoginError('กรุณากรอกรหัสพนักงานและรหัสผ่าน');
+      return;
+    }
+    if (!db) {
+      setLoginError('ไม่สามารถเชื่อมต่อฐานข้อมูลได้ กรุณาลองใหม่');
+      return;
+    }
+
+    const userListRef = ref(db, 'user');
+    onValue(userListRef, (snapshot) => {
+      const allUsers = snapshot.val();
+      if (allUsers) {
+        const foundKey = Object.keys(allUsers).find(key => 
+          (allUsers[key].emp_id === loginEmpId || key === loginEmpId) && 
+          allUsers[key].password === loginPassword
         );
-        if (found) {
-          const userObj = { emp_id: found.emp_id, username: found.username };
+        if (foundKey) {
+          const userObj = { emp_id: allUsers[foundKey].emp_id || foundKey, username: allUsers[foundKey].username || foundKey };
+          setLoginError('');
           setCurrentUser(userObj);
-          localStorage.setItem('fieldCollectorUser', JSON.stringify(userObj));
+          if (rememberMe) localStorage.setItem('fieldCollectorUser', JSON.stringify(userObj));
           setView('home');
-        } else {
-          setLoginError('รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง');
-        }
-      },
-      { onlyOnce: true }
+        } else { setLoginError('รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง'); }
+      } else { setLoginError('ไม่พบข้อมูลพนักงานในระบบ Database'); }
+    }, { onlyOnce: true });
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null); setLoginEmpId(''); setLoginPassword(''); setSearchQuery('');
+    localStorage.removeItem('fieldCollectorUser'); 
+    recognitionRef.current?.stop();
+    setView('login');
+  };
+
+  const handleGetLocation = () => {
+    setIsGettingLocation(true); setLocationError('');
+    if (!navigator.geolocation) {
+      setLocationError('เบราว์เซอร์ไม่รองรับ GPS'); setIsGettingLocation(false); return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => { setLocation({ lat: p.coords.latitude, lng: p.coords.longitude }); setIsGettingLocation(false); },
+      () => { setLocationError('กรุณาเปิด GPS'); setIsGettingLocation(false); },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
-  const handleTaskSelect = (task) => {
-    setActiveTask(task);
-    setView('detail');
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((p) =>
-        setLocation({ lat: p.coords.latitude, lng: p.coords.longitude })
-      );
+  useEffect(() => {
+    if (view === 'form' && activeTask && !location && !isGettingLocation) handleGetLocation();
+  }, [view, activeTask]);
+
+  const stampImage = (file, currentLocation) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width; canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const timestamp = new Date().toLocaleString('th-TH');
+          const gpsText = currentLocation ? `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}` : 'GPS: ไม่พบพิกัด';
+          const textLines = [timestamp, gpsText];
+          const fontSize = Math.max(16, Math.floor(img.width * 0.035));
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.fillRect(img.width - (fontSize * 15), img.height - (fontSize * 3.5), fontSize * 15, fontSize * 3.5);
+          ctx.fillStyle = 'white';
+          textLines.forEach((l, i) => ctx.fillText(l, img.width - (fontSize * 14.5), img.height - (fontSize * 2.2) + (i * fontSize * 1.2)));
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handlePhotoCapture = async (e) => {
+    const file = e.target.files[0];
+    if (file && photos.length < 4 && location) {
+      const stamped = await stampImage(file, location);
+      setPhotos([...photos, stamped]);
     }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleOpenTask = (task) => {
+    setResultCode(''); setTaskNote(''); setLocation(null); setPhotos([]);
+    recognitionRef.current?.stop();
+    setActiveTask(task);
+    setView('form');
+  };
+
+  const handleBackToHome = () => {
+    if (recognitionRef.current) recognitionRef.current.stop();
+    setActiveTask(null);
+    setView('home');
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!resultCode || photos.length === 0)
-      return alert('กรุณากรอกข้อมูลให้ครบ');
+    if (!location) return alert('กรุณารอระบบระบุตำแหน่ง GPS');
+    if (photos.length === 0) return alert('กรุณาแนบรูปภาพอย่างน้อย 1 รูป');
+    if (!resultCode) return alert('กรุณาเลือกผลการลงพื้นที่');
+    
     setIsSubmitting(true);
-    const data = {
-      ...activeTask,
-      result_code: resultCode,
-      photos,
-      task_note: taskNote,
-      location,
-      recorded_by: currentUser.emp_id,
-      timestamp: new Date().toISOString(),
+    const completed = {
+      ...activeTask, 
+      completedAt: new Date().toLocaleString('th-TH'), 
+      recorded_by: currentUser?.emp_id || 'N/A',
+      recorded_by_name: currentUser?.username || 'N/A',
+      resultDesc: resultOptions.find(r => r.code === resultCode)?.desc,
+      location, 
+      photos, 
+      taskNote, 
+      resultCode
     };
-    push(ref(db, 'history_tasks'), data).then(() => {
-      setIsSubmitting(false);
+
+    if (db) {
+      push(ref(db, 'history_tasks'), completed).then(() => {
+        setIsSubmitting(false); 
+        setShowSuccess(true);
+        setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
+      }).catch(err => {
+        alert("บันทึกไม่สำเร็จ: " + err.message);
+        setIsSubmitting(false);
+      });
+    } else {
+      alert("จำลองการส่งข้อมูลสำเร็จ (เชื่อมต่อ DB ไม่ได้)");
+      setIsSubmitting(false); 
       setShowSuccess(true);
-      setTimeout(() => {
-        setShowSuccess(false);
-        setView('home');
-        setPhotos([]);
-        setTaskNote('');
-      }, 2000);
-    });
+      setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
+    }
   };
 
-  // --- View 1: Login ---
+  const filteredTasks = pendingTasks.filter(t => selectedDept === 'ทั้งหมด' || t?.dept === selectedDept);
+  const searchResults = pendingTasks.filter(t => {
+    if (!searchQuery.trim()) return false;
+    const query = searchQuery.toLowerCase();
+    const pPlate = (t?.plateNumber || '').toLowerCase();
+    const pName = (t?.name || t?.customerName || '').toLowerCase();
+    const pContract = (t?.contractNo || t?.id || '').toLowerCase();
+    return pPlate.includes(query) || pName.includes(query) || pContract.includes(query);
+  });
+
+  const MapPreview = ({ lat, lng }) => (
+    <div className="w-full h-40 rounded-xl overflow-hidden border border-gray-200 mt-2 shadow-inner bg-gray-50">
+      <iframe title="map" width="100%" height="100%" frameBorder="0" src={`https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`}></iframe>
+    </div>
+  );
+
+  const openAddressInMaps = (address) => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank');
+  const openInGoogleMaps = (lat, lng) => window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+
+  // --- LOGIN VIEW ---
   if (view === 'login') {
     return (
-      <div className="min-h-screen bg-blue-900 flex items-center justify-center p-6">
-        <div className="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl">
-          <div className="text-center mb-8">
-            <div className="bg-blue-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
-              <MapPin size={40} />
-            </div>
-            <h1 className="text-2xl font-black text-blue-900">เข้าสู่ระบบ</h1>
-            <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">
-              Field Collector App
-            </p>
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
+        <div className="absolute top-[-50px] right-[-50px] opacity-10"><Map size={300} /></div>
+        <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 relative z-10">
+          <div className="flex flex-col items-center mb-8 text-center">
+            <div className="bg-blue-100 p-4 rounded-full mb-4 border border-blue-200"><MapPin size={40} className="text-blue-600" /></div>
+            <h1 className="text-2xl font-black text-blue-900 tracking-tight">เข้าสู่ระบบ</h1>
+            <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">Field Collector App</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
-            {loginError && (
-              <div className="text-red-500 text-xs font-bold text-center bg-red-50 p-2 rounded-lg border border-red-100">
-                {loginError}
-              </div>
-            )}
+            {loginError && <div className="bg-red-50 text-red-600 text-xs font-bold p-3 rounded-xl border border-red-200 flex items-center gap-2"><AlertCircle size={14} /> {loginError}</div>}
             <div>
-              <label className="text-xs font-black text-gray-500 uppercase ml-1">
-                รหัสพนักงาน
-              </label>
-              <input
-                type="text"
-                value={loginEmpId}
-                onChange={(e) => setLoginEmpId(e.target.value)}
-                className="w-full mt-1 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none"
-                placeholder="A01234501"
-              />
+              <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-wider">รหัสพนักงาน</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><IdCard size={18} className="text-gray-400" /></div>
+                <input type="text" value={loginEmpId} onChange={(e) => setLoginEmpId(e.target.value)} placeholder="รหัสพนักงาน" className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all uppercase" />
+              </div>
             </div>
-            <div className="relative">
-              <label className="text-xs font-black text-gray-500 uppercase ml-1">
-                รหัสผ่าน
-              </label>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full mt-1 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none"
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 bottom-4 text-gray-400"
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-wider">รหัสผ่าน</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Lock size={18} className="text-gray-400" /></div>
+                <input type={showPassword ? "text" : "password"} value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <button type="button" onClick={() => setRememberMe(!rememberMe)} className="flex items-center gap-2 text-sm text-gray-600 font-bold active:scale-95 transition-transform">
+                {rememberMe ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} className="text-gray-400" />} จดจำการเข้าสู่ระบบ
               </button>
             </div>
-            <button
-              type="submit"
-              className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-base shadow-lg active:scale-95 transition-all mt-4"
-            >
-              เข้าสู่ระบบ
-            </button>
+            <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all"><LogIn size={20} /> เข้าสู่ระบบ</button>
           </form>
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 30.1</p></div>
         </div>
       </div>
     );
   }
 
-  // --- View 2: Home ---
-  if (view === 'home') {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="bg-blue-800 text-white p-6 rounded-b-[32px] shadow-lg">
-          <div className="flex justify-between items-start mb-4">
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24 font-sans text-gray-900">
+      {viewingPhoto && (
+        <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4" onClick={() => setViewingPhoto(null)}>
+          <X className="absolute top-6 right-6 text-white" size={32} />
+          <img src={viewingPhoto} className="max-w-full max-h-[85vh] object-contain rounded-lg" />
+        </div>
+      )}
+
+      {view !== 'form' && view !== 'history-detail' && (
+        <div className="bg-blue-800 text-white rounded-b-3xl pt-10 pb-8 px-6 shadow-md relative overflow-hidden">
+          <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4"><Map size={150} /></div>
+          <div className="relative z-10 flex justify-between items-center mb-6">
             <div>
-              <p className="text-blue-200 text-[10px] font-black uppercase tracking-widest">
-                Employee ID: {currentUser?.emp_id}
-              </p>
-              <h2 className="text-xl font-black">
-                คุณ {currentUser?.username}
-              </h2>
+              <p className="text-blue-200 text-xs font-medium mb-1 uppercase tracking-widest">รหัสพนักงาน: {currentUser?.emp_id || 'ไม่ระบุ'}</p>
+              <h1 className="text-2xl font-bold flex items-center gap-2">{currentUser?.username || 'ไม่ระบุชื่อ'}</h1>
             </div>
-            <button
-              onClick={() => {
-                localStorage.removeItem('fieldCollectorUser');
-                setView('login');
-              }}
-              className="bg-white/10 p-2 rounded-xl"
-            >
-              <LogOut size={20} />
-            </button>
+            <button onClick={handleLogout} className="bg-white/20 p-3 rounded-full border border-white/30 backdrop-blur-sm flex items-center justify-center active:scale-90 transition-all shadow-sm"><LogOut size={24} className="text-white" /></button>
           </div>
-          <div className="relative">
-            <Search
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
-              size={18}
-            />
-            <input
-              type="text"
-              placeholder="ค้นหาชื่อลูกค้า..."
-              className="w-full pl-12 pr-4 py-3 bg-white rounded-2xl text-sm font-bold text-gray-800 outline-none shadow-inner"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+          <div className="flex gap-4 relative z-10">
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex-1 border border-white/10 text-center"><p className="text-blue-100 text-[10px] mb-1 uppercase font-bold tracking-wider">รายการงานวันนี้</p><p className="text-3xl font-bold">{pendingTasks.length}</p></div>
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex-1 border border-white/10 text-center"><p className="text-green-200 text-[10px] mb-1 uppercase font-bold tracking-wider">สำเร็จแล้ว</p><p className="text-3xl font-bold text-green-400">{historyTasks.length}</p></div>
           </div>
         </div>
-        <div className="p-6">
-          <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">
-            รายการงานวันนี้
-          </h3>
-          <div className="space-y-3">
-            {pendingTasks
-              .filter((t) => t.customerName.includes(searchQuery))
-              .map((task) => (
-                <div
-                  key={task.id}
-                  onClick={() => handleTaskSelect(task)}
-                  className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between active:scale-95 transition-all"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="bg-blue-50 p-3 rounded-xl text-blue-600">
-                      <MapPin size={24} />
+      )}
+
+      <main className="max-w-md mx-auto p-4 mt-2 space-y-5">
+        {view === 'home' && (
+          <div className="space-y-4 animate-slide-up">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Briefcase size={20} className="text-blue-600" /> งานที่ได้รับมอบหมาย</h2>
+              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1 shadow-sm">
+                <Filter size={14} className="text-gray-400" />
+                <select value={selectedDept} onChange={(e) => setSelectedDept(e.target.value)} className="text-xs font-bold text-gray-700 bg-transparent border-none outline-none focus:ring-0 cursor-pointer">
+                  {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+            </div>
+            {filteredTasks.length === 0 ? (
+              <div className="bg-white rounded-2xl p-10 text-center border border-dashed border-gray-300 opacity-60"><p className="font-medium text-gray-400">ไม่พบรายการงาน</p></div>
+            ) : filteredTasks.map(t => (
+                <div key={t.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3">
+                  <div className="flex justify-between items-start">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2"><span className="bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">{t?.dept}</span><h3 className="font-bold text-gray-900">{t?.name || t?.customerName}</h3></div>
+                      <p className="text-[11px] text-blue-600 font-bold flex items-center gap-1"><Tag size={12}/> {t?.assetType || 'ไม่มีข้อมูลประเภท'}</p>
+                      <p className="text-xs bg-gray-100 text-gray-700 inline-block px-2 py-1 rounded-md font-bold mt-1 border border-gray-200">ทะเบียน: {t?.plateNumber || 'ไม่ระบุ'}</p>
                     </div>
-                    <div>
-                      <p className="font-black text-sm text-gray-800">
-                        {task.customerName}
-                      </p>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase">
-                        {task.dept} | {task.id}
-                      </p>
+                    <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded border uppercase">{t?.contractNo || t?.id}</span>
+                  </div>
+                  <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">{t?.address}</p>
+                  <div className="flex justify-between items-center border-t pt-3">
+                    <p className="font-bold text-red-600 tracking-tight">{t?.outstanding || 'N/A'}</p>
+                    <button onClick={() => handleOpenTask(t)} className="bg-blue-600 text-white px-5 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all shadow-sm">บันทึกงาน</button>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        )}
+
+        {view === 'search' && (
+          <div className="space-y-4 animate-slide-up">
+            <div className="px-1 mb-2">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Search size={20} className="text-blue-600" /> ค้นหาข้อมูล</h2>
+              <p className="text-xs text-gray-500 mt-1">ค้นหาจากทะเบียนรถ, ชื่อลูกค้า หรือเลขที่สัญญา</p>
+            </div>
+            
+            <div className="relative sticky top-4 z-20">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Search size={18} className={listeningField === 'search' ? "text-blue-500" : "text-gray-400"} /></div>
+              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={listeningField === 'search' ? "กำลังฟังเสียงของคุณ..." : "พิมพ์ หรือ พูดเพื่อค้นหา..."} className={`w-full pl-11 pr-24 py-4 bg-white border rounded-2xl text-sm font-bold outline-none transition-all shadow-sm focus:shadow-md ${listeningField === 'search' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-gray-200 focus:border-blue-500'}`} />
+              <div className="absolute inset-y-0 right-2 flex items-center gap-1">
+                {searchQuery && (<button onClick={() => setSearchQuery('')} className="p-1.5 text-gray-400 hover:text-gray-600 bg-gray-100 rounded-full transition-colors"><X size={14} /></button>)}
+                <button onClick={() => toggleVoiceInput('search', setSearchQuery, false)} className={`p-2 rounded-full transition-all ${listeningField === 'search' ? 'bg-red-100 text-red-600 animate-pulse shadow-inner' : 'text-blue-600 hover:bg-blue-50 bg-blue-50/50 border border-blue-100'}`}><Mic size={18} /></button>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              {!searchQuery.trim() && listeningField !== 'search' ? (
+                <div className="bg-white rounded-2xl p-10 text-center border border-dashed border-gray-300 opacity-60 mt-4"><Search size={32} className="mx-auto text-gray-300 mb-2" /><p className="font-medium text-gray-400 text-sm">พิมพ์ข้อมูล หรือ กดไมค์เพื่อพูด</p></div>
+              ) : listeningField === 'search' ? (
+                <div className="bg-blue-50 rounded-2xl p-10 text-center border border-blue-200 mt-4 animate-pulse"><Mic size={32} className="mx-auto text-blue-500 mb-2" /><p className="font-bold text-blue-700 text-sm">กำลังรับฟังเสียง...</p></div>
+              ) : searchResults.length === 0 ? (
+                <div className="bg-white rounded-2xl p-10 text-center border border-dashed border-gray-300 opacity-60 mt-4"><AlertCircle size={32} className="mx-auto text-red-300 mb-2" /><p className="font-medium text-gray-400 text-sm">ไม่พบข้อมูลที่ตรงกับ <br/> "{searchQuery}"</p></div>
+              ) : (
+                <div className="space-y-4 mt-4">
+                  <p className="text-xs font-bold text-gray-500 px-1">พบ {searchResults.length} รายการ</p>
+                  {searchResults.map(t => (
+                    <div key={t.id} onClick={() => handleOpenTask(t)} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3 active:bg-blue-50 transition-colors cursor-pointer group">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2"><span className="bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">{t?.dept}</span><h3 className="font-bold text-gray-900">{t?.name || t?.customerName}</h3></div>
+                          <p className="text-xs font-bold text-blue-700 bg-blue-50 inline-block px-2 py-1 rounded-md mt-1 border border-blue-100">ทะเบียน: {t?.plateNumber || 'N/A'}</p>
+                        </div>
+                        <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded border uppercase">{t?.contractNo || t?.id}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-t pt-3"><p className="text-[11px] text-gray-500 flex items-center gap-1"><Tag size={12}/> {t?.assetType || 'N/A'}</p><ChevronRight size={16} className="text-gray-300 group-active:text-blue-500" /></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'form' && activeTask && (
+          <div className="space-y-5 pb-10 animate-slide-up">
+            <header className="flex items-center gap-2 mb-2">
+              <button onClick={() => setView(searchQuery ? 'search' : 'home')} className="p-2 bg-white rounded-full border shadow-sm active:scale-90 transition-all"><ChevronLeft size={20}/></button>
+              <h2 className="font-bold text-gray-800">ย้อนกลับ</h2>
+            </header>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+               <div className="bg-blue-50 px-4 py-3 border-b border-blue-100 flex justify-between items-center"><h2 className="font-bold text-blue-900 flex items-center gap-2"><FileText size={18} /> ข้อมูลลูกค้า</h2></div>
+               <div className="p-4 space-y-2 text-sm">
+                  <div className="flex justify-between font-medium"><span>ชื่อ-สกุล:</span><span className="font-bold">{activeTask?.name || activeTask?.customerName}</span></div>
+                  <div className="flex justify-between font-medium"><span>แผนก / สัญญา:</span><span className="font-bold text-blue-600">{activeTask?.dept} | {activeTask?.contractNo || activeTask?.id}</span></div>
+                  <div className="bg-gray-50 p-2 rounded-lg flex flex-col gap-2 mt-2 font-bold text-xs border border-gray-100">
+                    <div className="flex justify-between items-center"><span className="text-gray-500 flex items-center gap-1"><Tag size={12}/> ประเภท:</span><span className="text-blue-800">{activeTask?.assetType || 'N/A'}</span></div>
+                    <div className="flex justify-between items-center border-t border-gray-200 pt-2"><span className="text-gray-500 flex items-center gap-1">ทะเบียนรถ:</span><span className="text-gray-900 text-sm bg-white px-2 py-0.5 rounded border">{activeTask?.plateNumber || 'N/A'}</span></div>
+                  </div>
+                  <div className="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-start gap-2"><MapPin size={14} className="text-red-500 mt-0.5 flex-shrink-0" /><p className="text-gray-700 text-xs leading-relaxed flex-1">{activeTask?.address}</p></div>
+                    <button onClick={() => openAddressInMaps(activeTask?.address)} className="mt-3 w-full bg-white border border-blue-200 text-blue-600 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 shadow-sm active:bg-blue-50 transition-all"><Navigation size={14} /> นำทางด้วย Google Maps</button>
+                  </div>
+                  <p className="text-right font-bold text-red-600 text-xl mt-3 border-t pt-3 tracking-tight">{activeTask?.outstanding || 'N/A'}</p>
+               </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-blue-500 space-y-4">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2"><ClipboardList size={18} className="text-blue-500" /> ข้อมูลปฏิบัติงาน</h3>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">พิกัด GPS อัตโนมัติ <span className="text-red-500">*</span></label>
+                {!location ? (
+                  <div className="bg-blue-50 border-2 border-dashed border-blue-100 py-8 rounded-xl flex flex-col items-center justify-center gap-2 font-bold text-blue-700">
+                    <Navigation size={28} className="text-blue-400" /><p className="text-xs">กำลังระบุพิกัด...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center px-1"><p className="text-[10px] font-mono font-bold text-green-600">{location.lat.toFixed(6)}, {location.lng.toFixed(6)}</p><button onClick={handleGetLocation} className="text-[10px] text-blue-600 font-bold underline">อัปเดตพิกัด</button></div>
+                    <MapPreview lat={location.lat} lng={location.lng} />
+                  </div>
+                )}
+              </div>
+              
+              <div className="pt-2 border-t border-gray-100">
+                <div className="flex justify-between items-center mb-3">
+                  <label className={`text-xs font-bold ${!location ? 'text-gray-300' : 'text-gray-700'}`}>ภาพถ่ายหน้างาน <span className="text-red-500">*</span> {!location && <span className="text-[9px] text-red-400 ml-1 font-black">(รอ GPS)</span>}</label>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${!location ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600'}`}>{photos.length}/4</span>
+                </div>
+                <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handlePhotoCapture} disabled={!location} />
+                <div className="grid grid-cols-2 gap-3">
+                  {photos.map((p, i) => (
+                    <div key={i} className="relative aspect-video rounded-xl overflow-hidden border border-gray-200" onClick={() => setViewingPhoto(p)}>
+                      <img src={p} className="w-full h-full object-cover" />
+                      <button onClick={(e) => { e.stopPropagation(); setPhotos(photos.filter((_, idx) => idx !== i)); }} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full shadow-lg"><X size={10} /></button>
+                    </div>
+                  ))}
+                  {photos.length < 4 && (
+                    <button onClick={() => location && fileInputRef.current.click()} disabled={!location} className={`aspect-video border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${!location ? 'border-gray-100 bg-gray-50/50 text-gray-200 cursor-not-allowed' : 'border-gray-200 text-gray-400 active:bg-gray-50'}`}>
+                      {location ? <Camera size={24} /> : <Lock size={20} />}<span className="text-[10px] font-bold mt-1 uppercase">{location ? 'เพิ่มรูป' : 'รอ GPS...'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-gray-100">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">หมายเหตุ / รายละเอียด <span className="text-red-500">*</span></label>
+                  <button onClick={(e) => { e.preventDefault(); toggleVoiceInput('note', setTaskNote, true); }} className={`text-[10px] font-bold px-2 py-1.5 rounded-lg flex items-center gap-1 transition-all border ${listeningField === 'note' ? 'bg-red-100 text-red-600 border-red-200 animate-pulse' : 'bg-white text-blue-600 border-blue-200 shadow-sm active:scale-95'}`}><Mic size={12} /> {listeningField === 'note' ? 'กำลังฟัง...' : 'พูดเพื่อพิมพ์'}</button>
+                </div>
+                <textarea value={taskNote} onChange={(e) => setTaskNote(e.target.value)} placeholder={listeningField === 'note' ? "กำลังรอรับเสียง..." : "กรุณาระบุรายละเอียดการลงพื้นที่..."} className={`w-full p-3 border rounded-xl text-sm outline-none min-h-[100px] transition-all ${listeningField === 'note' ? 'bg-red-50/30 border-red-300 ring-2 ring-red-500/20' : 'bg-gray-50 focus:bg-white border-gray-200'}`} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-green-500">
+               <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><CheckCircle2 size={18} className="text-green-500" /> ผลการลงพื้นที่ <span className="text-red-500">*</span></h3>
+               <select value={resultCode} onChange={(e) => setResultCode(e.target.value)} className="w-full p-3 border rounded-xl bg-white text-sm font-bold outline-none focus:ring-2 focus:ring-green-500/20" required>
+                <option value="" disabled>-- กรุณาเลือกผลลัพธ์ --</option>
+                {resultOptions.map(o => <option key={o.code} value={o.code}>{o.desc}</option>)}
+               </select>
+            </div>
+
+            <button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-blue-700 text-white py-4 rounded-2xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:bg-gray-300">
+              {isSubmitting ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Save size={22} />} บันทึกข้อมูลเข้าระบบ
+            </button>
+          </div>
+        )}
+
+        {view === 'history' && (
+          <div className="space-y-4 animate-slide-up">
+            <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg px-1"><History size={20} className="text-blue-600" /> ประวัติการทำงาน</h2>
+            {historyTasks.length === 0 ? (
+              <div className="text-center py-20 opacity-40"><p className="font-medium text-gray-500">ยังไม่มีประวัติการส่งงาน</p></div>
+            ) : historyTasks.map((t, i) => (
+                <div key={i} onClick={() => { setSelectedHistoryTask(t); setView('history-detail'); }} className="bg-white p-4 rounded-2xl border-l-4 border-l-green-500 shadow-sm flex items-center justify-between active:bg-gray-50 transition-all cursor-pointer">
+                  <div className="space-y-1">
+                    <h3 className="font-bold text-sm text-gray-800">{t?.name || t?.customerName || 'ไม่ระบุชื่อ'}</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded tracking-tighter">{t?.resultDesc}</span>
+                      <span className="text-[10px] font-bold text-indigo-400 bg-indigo-50 px-1.5 py-0.5 rounded uppercase tracking-tighter">{t?.dept}</span>
+                      <span className="text-[10px] font-bold text-gray-400">{t?.completedAt}</span>
                     </div>
                   </div>
                   <ChevronRight size={20} className="text-gray-300" />
                 </div>
-              ))}
+              ))
+            }
           </div>
-        </div>
-      </div>
-    );
-  }
+        )}
 
-  // --- View 3: Detail/Form ---
-  return (
-    <div className="min-h-screen bg-gray-50 pb-10">
-      <div className="bg-white p-4 flex items-center gap-4 border-b">
-        <button onClick={() => setView('home')}>
-          <ChevronLeft size={24} />
-        </button>
-        <h3 className="font-black text-lg">บันทึกผลงาน</h3>
-      </div>
-      <div className="p-6 space-y-6">
-        <div className="bg-white p-6 rounded-3xl border shadow-sm">
-          <span className="text-blue-600 text-[10px] font-black uppercase bg-blue-50 px-2 py-1 rounded">
-            {activeTask?.dept}
-          </span>
-          <h2 className="text-xl font-black mt-2">
-            {activeTask?.customerName}
-          </h2>
-          <p className="text-xs text-gray-500 font-bold mt-1">
-            {activeTask?.address}
-          </p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-3">
-            <label className="text-xs font-black text-gray-400 uppercase">
-              ผลการดำเนินงาน
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {resultOptions.map((opt) => (
-                <button
-                  key={opt.code}
-                  type="button"
-                  onClick={() => setResultCode(opt.code)}
-                  className={`p-4 rounded-2xl text-[10px] font-black border-2 transition-all ${
-                    resultCode === opt.code
-                      ? 'border-blue-600 bg-blue-50 text-blue-600'
-                      : 'bg-white text-gray-400 border-gray-100'
-                  }`}
-                >
-                  {opt.desc}
-                </button>
-              ))}
+        {view === 'history-detail' && selectedHistoryTask && (
+          <div className="space-y-5 pb-10 animate-slide-up">
+            <header className="flex items-center gap-2 mb-2">
+              <button onClick={() => setView('history')} className="p-2 bg-white rounded-full border shadow-sm active:scale-90 transition-all"><ChevronLeft size={20}/></button>
+              <h2 className="font-bold text-gray-800">ย้อนกลับ</h2>
+            </header>
+            <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-4">
+              <div className="flex justify-between items-center border-b pb-2"><h3 className="font-bold text-blue-900 flex items-center gap-2"><FileText size={18} /> รายละเอียดงาน</h3><span className="text-[10px] font-bold text-gray-400">{selectedHistoryTask.completedAt}</span></div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between font-medium"><span>ลูกค้า:</span><span className="font-bold text-gray-800">{selectedHistoryTask?.name || selectedHistoryTask?.customerName}</span></div>
+                <div className="flex justify-between font-medium"><span>แผนก / สัญญา:</span><span className="font-bold text-indigo-600">{selectedHistoryTask?.dept} | {selectedHistoryTask?.contractNo || selectedHistoryTask?.id}</span></div>
+                <div className="flex justify-between font-medium items-center border-t border-gray-50 pt-2 mt-2"><span>ผู้บันทึก:</span><span className="font-bold text-blue-600 flex items-center gap-1"><UserCheck size={14}/> {selectedHistoryTask?.recorded_by_name || selectedHistoryTask?.recordedBy || 'N/A'}</span></div>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-l-4 border-l-blue-500 p-4 space-y-4">
+              <h3 className="font-bold text-gray-800">ข้อมูลสถานที่</h3>
+              {selectedHistoryTask.location && (
+                <>
+                  <MapPreview lat={selectedHistoryTask.location.lat} lng={selectedHistoryTask.location.lng} />
+                  <button onClick={() => openInGoogleMaps(selectedHistoryTask.location.lat, selectedHistoryTask.location.lng)} className="w-full bg-blue-50 text-blue-600 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-blue-100 active:bg-blue-100"><Map size={14}/> เปิดใน Google Maps <ExternalLink size={12}/></button>
+                </>
+              )}
+              {selectedHistoryTask.photos?.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 pt-2">
+                  {selectedHistoryTask.photos.map((p, i) => (
+                    <div key={i} className="rounded-xl overflow-hidden border aspect-video" onClick={() => setViewingPhoto(p)}><img src={p} className="w-full h-full object-cover" /></div>
+                  ))}
+                </div>
+              )}
+              {selectedHistoryTask.taskNote && <p className="bg-gray-50 p-3 rounded-xl text-sm italic text-gray-600 border border-dashed leading-relaxed">"{selectedHistoryTask.taskNote}"</p>}
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-l-4 border-l-green-500 p-4">
+              <h3 className="font-bold text-gray-800 mb-2">ผลการลงพื้นที่</h3>
+              <div className="bg-green-50 p-3 rounded-xl border border-green-100 font-bold text-green-800 shadow-inner text-center">{selectedHistoryTask.resultDesc}</div>
             </div>
           </div>
-          <div className="space-y-3">
-            <label className="text-xs font-black text-gray-400 uppercase">
-              รูปถ่ายหน้างาน
-            </label>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="min-w-[100px] h-[100px] bg-gray-100 rounded-2xl flex flex-col items-center justify-center border-2 border-dashed border-gray-200 text-gray-400 active:scale-90 transition-all"
-              >
-                <Camera size={24} />
-                <span className="text-[10px] mt-1 font-bold">ถ่ายภาพ</span>
-              </button>
-              <input
-                type="file"
-                capture="environment"
-                className="hidden"
-                ref={fileInputRef}
-                onChange={(e) => {
-                  const r = new FileReader();
-                  r.onload = () => setPhotos([...photos, r.result]);
-                  r.readAsDataURL(e.target.files[0]);
-                }}
-              />
-              {photos.map((p, i) => (
-                <img
-                  key={i}
-                  src={p}
-                  className="w-[100px] h-[100px] object-cover rounded-2xl border"
-                />
-              ))}
-            </div>
-          </div>
-          <div className="space-y-3">
-            <label className="text-xs font-black text-gray-400 uppercase">
-              รายละเอียดเพิ่มเติม
-            </label>
-            <textarea
-              value={taskNote}
-              onChange={(e) => setTaskNote(e.target.value)}
-              className="w-full h-32 p-4 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-500"
-              placeholder="พิมพ์ข้อมูลที่นี่..."
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? 'กำลังส่ง...' : 'บันทึกและส่งงาน'}
-          </button>
-        </form>
-      </div>
-      {showSuccess && (
-        <div className="fixed inset-0 bg-blue-900/90 flex items-center justify-center z-50 p-6">
-          <div className="bg-white p-10 rounded-3xl text-center">
-            <CheckCircle2 size={60} className="text-green-500 mx-auto mb-4" />
-            <h4 className="text-2xl font-black">สำเร็จ!</h4>
-            <p className="text-gray-500 font-bold">บันทึกข้อมูลเรียบร้อย</p>
-          </div>
+        )}
+      </main>
+
+      {view !== 'login' && view !== 'form' && view !== 'history-detail' && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 border-t border-gray-100 p-3 pb-6 flex justify-around shadow-[0_-5px_20px_rgba(0,0,0,0.05)] z-40">
+          <button onClick={() => { handleBackToHome(); setView('home'); }} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'home' || (view === 'form' && !searchQuery) ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><HomeIcon size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">หน้าหลัก</span></button>
+          <button onClick={() => { setView('search'); }} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'search' || (view === 'form' && searchQuery) ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><Search size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">ค้นหา</span></button>
+          <button onClick={() => setView('history')} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'history' || view === 'history-detail' ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><History size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">ประวัติ</span></button>
         </div>
       )}
+
+      {showSuccess && (
+        <div className="fixed inset-0 z-[110] bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+           <div className="bg-white p-10 rounded-3xl shadow-2xl border-2 border-gray-50 flex flex-col items-center animate-bounce-in">
+              <div className="bg-green-100 p-4 rounded-full mb-6 text-green-600"><CheckCircle2 size={80} /></div>
+              <h2 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">บันทึกเรียบร้อย!</h2>
+              <p className="text-gray-500 font-bold text-sm">ข้อมูลถูกส่งเข้าระบบสำเร็จแล้ว</p>
+           </div>
+        </div>
+      )}
+      
+      <style>{`
+        @keyframes slide-up { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bounce-in { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.05); } 70% { transform: scale(0.9); } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-bounce-in { animation: bounce-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        .animate-fade-in { animation: fade-in 0.3s ease-out; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+      `}</style>
     </div>
   );
-};
+}
 
-export default App;
+// ==========================================
+// 2. ERROR BOUNDARY COMPONENT (กันแอปตายจอขาว)
+// ==========================================
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-red-50 flex flex-col items-center justify-center p-6 font-sans text-center">
+          <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full border-t-8 border-red-500">
+            <AlertCircle size={60} className="text-red-500 mx-auto mb-4" />
+            <h1 className="text-xl font-black text-gray-900 mb-2">อัปเดตข้อมูลระบบขัดข้อง</h1>
+            <p className="text-sm text-gray-500 mb-6 font-bold">ข้อมูลเก่าที่บันทึกไว้ในเครื่องอาจไม่ตรงกับเวอร์ชันใหม่ครับ</p>
+            
+            <div className="bg-red-50 p-4 rounded-xl text-left overflow-auto mb-6 text-[10px] font-mono text-red-800 border border-red-100">
+              {this.state.error?.toString()}
+            </div>
+
+            <button 
+              onClick={() => {
+                localStorage.clear();
+                window.location.reload();
+              }}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+            >
+              ล้างข้อมูลเครื่องและรีสตาร์ทแอป
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
+  );
+}
