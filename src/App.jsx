@@ -5,7 +5,7 @@ import {
   Home as HomeIcon, History, ChevronLeft, ChevronRight, Clock,
   Briefcase, Tag, ZoomIn, ExternalLink, Navigation, UserCheck,
   Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard,
-  Eye, EyeOff
+  Eye, EyeOff, CloudOff, CloudUpload, RefreshCw
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -70,6 +70,10 @@ function MainApp() {
   
   const [pendingTasks, setPendingTasks] = useState(initialTasks);
   const [historyTasks, setHistoryTasks] = useState([]);
+  
+  // 🛒 ตะกร้างานรอส่ง (Offline Queue)
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const [resultCode, setResultCode] = useState('');
   const [location, setLocation] = useState(null);
@@ -102,17 +106,56 @@ function MainApp() {
     { code: 'R13', desc: 'ไม่พบที่ตั้ง' },
   ];
 
-  // --- ติดตามสถานะเน็ต ---
+  // --- ติดตามสถานะเน็ต และโหลดคิวออฟไลน์ตอนเริ่ม ---
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    
+    // โหลดคิวงานจาก LocalStorage
+    const savedQueue = localStorage.getItem('offlineTaskQueue');
+    if (savedQueue) {
+      try { setOfflineQueue(JSON.parse(savedQueue)); } catch(e) { console.error("โหลดคิวออฟไลน์พัง:", e); }
+    }
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // --- 🔄 ระบบ Auto-Sync งานออฟไลน์เมื่อมีเน็ต ---
+  useEffect(() => {
+    if (isOnline && offlineQueue.length > 0 && db && !isSyncing) {
+      syncOfflineData();
+    }
+  }, [isOnline, offlineQueue, isSyncing]);
+
+  const syncOfflineData = async () => {
+    setIsSyncing(true);
+    let currentQueue = [...offlineQueue];
+    let failedQueue = [];
+
+    for (const task of currentQueue) {
+      try {
+        await push(ref(db, 'history_tasks'), task);
+      } catch (error) {
+        console.error("ซิงค์งานไม่สำเร็จ (เก็บไว้ส่งรอบหน้า):", error);
+        failedQueue.push(task); // ถ้าส่งไม่ผ่าน ให้เก็บไว้ในคิวเหมือนเดิม
+      }
+    }
+
+    setOfflineQueue(failedQueue);
+    localStorage.setItem('offlineTaskQueue', JSON.stringify(failedQueue));
+    setIsSyncing(false);
+    
+    // ถ้าส่งผ่านหมด โชว์แจ้งเตือนให้ดีใจนิดนึง (เฉพาะถ้ามีงานเคยค้าง)
+    if (currentQueue.length > 0 && failedQueue.length === 0) {
+      // แอบใส่ Notification เล็กๆ หรือลอจิกตามชอบได้ครับ
+      console.log("ซิงค์ข้อมูลออฟไลน์ทั้งหมดขึ้นเซิร์ฟเวอร์เรียบร้อย!");
+    }
+  };
 
   // --- Auto-Login แบบปลอดภัย ---
   useEffect(() => {
@@ -194,8 +237,8 @@ function MainApp() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (!isOnline) {
-      setLoginError('ไม่มีสัญญาณอินเทอร์เน็ต ไม่สามารถล็อกอินได้');
+    if (!isOnline && !currentUser) { // ยอมให้ล็อกอินออฟไลน์ได้ถ้าเคยมีข้อมูลในเครื่อง
+      setLoginError('ไม่มีสัญญาณอินเทอร์เน็ตสำหรับการล็อกอินครั้งแรก');
       return;
     }
     if (!loginEmpId.trim() || !loginPassword.trim()) {
@@ -300,24 +343,15 @@ function MainApp() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!isOnline) {
-      alert("❌ ไม่สามารถส่งงานได้: กรุณาเชื่อมต่ออินเทอร์เน็ต");
-      return;
-    }
     if (!location) return alert('กรุณารอระบบระบุตำแหน่ง GPS');
     if (photos.length === 0) return alert('กรุณาแนบรูปภาพอย่างน้อย 1 รูป');
     if (!resultCode) return alert('กรุณาเลือกผลการลงพื้นที่');
     
     setIsSubmitting(true);
     
-    // ตั้งเวลาเผื่อเน็ตช้า Database ไม่ตอบสนอง
-    const timeout = setTimeout(() => {
-      setIsSubmitting(false);
-      alert("⏱️ การส่งข้อมูลล่าช้า: ระบบอาจมีปัญหาหรืออินเทอร์เน็ตช้าเกินไป");
-    }, 15000);
-
     const completed = {
       ...activeTask, 
+      offlineId: `offline-${Date.now()}`, // ID พิเศษสำหรับงานออฟไลน์
       completedAt: new Date().toLocaleString('th-TH'), 
       recorded_by: currentUser?.emp_id || 'N/A',
       recorded_by_name: currentUser?.username || 'N/A',
@@ -328,22 +362,47 @@ function MainApp() {
       resultCode
     };
 
+    // 🔴 ถ้าระบบรู้ตัวว่าไม่มีเน็ต -> ส่งเข้าตะกร้าเลย
+    if (!isOnline) {
+      const newQueue = [completed, ...offlineQueue];
+      setOfflineQueue(newQueue);
+      localStorage.setItem('offlineTaskQueue', JSON.stringify(newQueue));
+      
+      setIsSubmitting(false); 
+      setShowSuccess('offline'); // โชว์ Success แบบออฟไลน์
+      setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2500);
+      return;
+    }
+
+    // 🟢 ถ้ามีเน็ต -> ส่งขึ้น Firebase
+    const timeout = setTimeout(() => {
+      // เผื่อเน็ตช้ามากจนหลุด ก็ส่งเข้าตะกร้าเหมือนกัน
+      if (isSubmitting) {
+        setIsSubmitting(false);
+        const newQueue = [completed, ...offlineQueue];
+        setOfflineQueue(newQueue);
+        localStorage.setItem('offlineTaskQueue', JSON.stringify(newQueue));
+        alert("⏱️ เน็ตช้ามาก: ระบบบันทึกงานลงในเครื่องไว้ชั่วคราวแล้วครับ (ตะกร้าออฟไลน์)");
+        handleBackToHome();
+      }
+    }, 10000);
+
     if (db) {
       push(ref(db, 'history_tasks'), completed).then(() => {
         clearTimeout(timeout);
         setIsSubmitting(false); 
-        setShowSuccess(true);
+        setShowSuccess('online'); // โชว์ Success แบบออนไลน์ปกติ
         setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
       }).catch(err => {
+        // ส่งไม่ผ่าน (เช่น Rules ปิดอยู่) ก็ส่งเข้าตะกร้าเหมือนกัน!
         clearTimeout(timeout);
-        alert("บันทึกไม่สำเร็จ: " + err.message);
+        const newQueue = [completed, ...offlineQueue];
+        setOfflineQueue(newQueue);
+        localStorage.setItem('offlineTaskQueue', JSON.stringify(newQueue));
         setIsSubmitting(false);
+        alert("⚠️ บันทึกขึ้นเซิร์ฟเวอร์ไม่ได้ (บันทึกในเครื่องแทนแล้ว): " + err.message);
+        handleBackToHome();
       });
-    } else {
-      clearTimeout(timeout);
-      setIsSubmitting(false); 
-      setShowSuccess(true);
-      setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
     }
   };
 
@@ -371,8 +430,8 @@ function MainApp() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
         {!isOnline && (
-          <div className="absolute top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1 text-center font-black z-[100] animate-pulse uppercase">
-            Offline Mode - ไม่มีการเชื่อมต่ออินเทอร์เน็ต
+          <div className="absolute top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1 text-center font-black z-[100] animate-pulse uppercase tracking-widest flex items-center justify-center gap-1">
+            <CloudOff size={12}/> Offline Mode - ไม่มีการเชื่อมต่อเน็ต
           </div>
         )}
         <div className="absolute top-[-50px] right-[-50px] opacity-10"><Map size={300} /></div>
@@ -404,9 +463,9 @@ function MainApp() {
                 {rememberMe ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} className="text-gray-400" />} จดจำการเข้าสู่ระบบ
               </button>
             </div>
-            <button type="submit" disabled={!isOnline} className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:bg-gray-300"><LogIn size={20} /> เข้าสู่ระบบ</button>
+            <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all"><LogIn size={20} /> เข้าสู่ระบบ</button>
           </form>
-          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 30</p></div>
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 31</p></div>
         </div>
       </div>
     );
@@ -415,12 +474,16 @@ function MainApp() {
   return (
     <div className="min-h-screen bg-gray-50 pb-24 font-sans text-gray-900">
       
-      {/* 🔴 แถบแจ้งเตือนเน็ตหลุด */}
-      {!isOnline && (
-        <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1.5 text-center font-black z-[200] animate-pulse uppercase tracking-widest">
-          Offline Mode - ไม่มีการเชื่อมต่ออินเทอร์เน็ต
+      {/* 🔴 แถบแจ้งเตือนเน็ตหลุด / หรือสถานะกำลังซิงค์ */}
+      {!isOnline ? (
+        <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1 text-center font-black z-[200] animate-pulse uppercase tracking-widest flex items-center justify-center gap-1">
+          <CloudOff size={12}/> Offline Mode - โหมดบันทึกข้อมูลแบบไม่มีเน็ต
         </div>
-      )}
+      ) : isSyncing ? (
+        <div className="fixed top-0 left-0 right-0 bg-orange-500 text-white text-[10px] py-1 text-center font-black z-[200] uppercase tracking-widest flex items-center justify-center gap-2">
+          <RefreshCw size={12} className="animate-spin"/> กำลังส่งงานออฟไลน์ ({offlineQueue.length})
+        </div>
+      ) : null}
 
       {viewingPhoto && (
         <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4" onClick={() => setViewingPhoto(null)}>
@@ -441,7 +504,15 @@ function MainApp() {
           </div>
           <div className="flex gap-4 relative z-10">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex-1 border border-white/10 text-center"><p className="text-blue-100 text-[10px] mb-1 uppercase font-bold tracking-wider">รายการงานวันนี้</p><p className="text-3xl font-bold">{pendingTasks.length}</p></div>
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex-1 border border-white/10 text-center"><p className="text-green-200 text-[10px] mb-1 uppercase font-bold tracking-wider">สำเร็จแล้ว</p><p className="text-3xl font-bold text-green-400">{historyTasks.length}</p></div>
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 flex-1 border border-white/10 text-center relative">
+              <p className="text-green-200 text-[10px] mb-1 uppercase font-bold tracking-wider">สำเร็จแล้ว</p>
+              <p className="text-3xl font-bold text-green-400">{historyTasks.length + offlineQueue.length}</p>
+              {offlineQueue.length > 0 && (
+                <span className="absolute -top-2 -right-2 bg-orange-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-lg border-2 border-blue-800 animate-bounce">
+                  รอส่ง {offlineQueue.length}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -483,6 +554,7 @@ function MainApp() {
 
         {view === 'search' && (
           <div className="space-y-4 animate-slide-up">
+            {/* Search Content (เหมือนเดิม) */}
             <div className="px-1 mb-2">
               <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg"><Search size={20} className="text-blue-600" /> ค้นหาข้อมูล</h2>
               <p className="text-xs text-gray-500 mt-1">ค้นหาจากทะเบียนรถ, ชื่อลูกค้า หรือเลขที่สัญญา</p>
@@ -527,7 +599,7 @@ function MainApp() {
 
         {view === 'form' && activeTask && (
           <div className="space-y-5 pb-10 animate-slide-up">
-            {/* 🛠️ เปลี่ยนปุ่มย้อนกลับให้ตรงตามรูปเป๊ะ */}
+            {/* ✨ ปรับดีไซน์ UI คืนตามรูปเป๊ะ */}
             <header className="flex items-center gap-3 mb-3 pl-1">
               <button onClick={() => setView(searchQuery ? 'search' : 'home')} className="p-2.5 bg-white rounded-full border border-gray-200 shadow-sm active:scale-90 transition-all text-gray-700">
                 <ChevronLeft size={20} />
@@ -535,7 +607,6 @@ function MainApp() {
               <h2 className="font-bold text-gray-800 text-base">ย้อนกลับ</h2>
             </header>
 
-            {/* 🛠️ ปรับแก้ดีไซน์การ์ดข้อมูลลูกค้าตามภาพที่ส่งมาเป๊ะ 100% */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                <div className="bg-[#f4f7fb] px-4 py-3 border-b border-[#e5ecf6] flex items-center gap-2">
                  <FileText size={18} className="text-[#1e40af]" />
@@ -551,7 +622,6 @@ function MainApp() {
                     <span className="font-bold text-blue-600">{activeTask?.dept} | {activeTask?.contractNo || activeTask?.id}</span>
                   </div>
                   
-                  {/* กรอบสีเทาอ่อนสำหรับใส่ ประเภท และ ทะเบียนรถ */}
                   <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-gray-500 flex items-center gap-1 text-xs"><Tag size={12}/> ประเภท:</span>
@@ -563,7 +633,6 @@ function MainApp() {
                     </div>
                   </div>
 
-                  {/* กรอบที่อยู่พร้อมปุ่มนำทาง Google Maps */}
                   <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
                     <div className="flex items-start gap-2">
                       <MapPin size={14} className="text-red-500 mt-0.5 shrink-0" />
@@ -580,7 +649,6 @@ function MainApp() {
                </div>
             </div>
 
-            {/* ส่วนด้านล่างที่เป็นฟอร์มบันทึกงาน (คงเดิมตามโค้ด V30 6 รูป ของคุณ King) */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-blue-500 space-y-4">
               <h3 className="font-bold text-gray-800 flex items-center gap-2"><ClipboardList size={18} className="text-blue-500" /> ข้อมูลปฏิบัติงาน</h3>
               <div>
@@ -638,22 +706,43 @@ function MainApp() {
             </div>
 
             <button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-blue-700 text-white py-4 rounded-2xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:bg-gray-300">
-              {isSubmitting ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Save size={22} />} บันทึกข้อมูลเข้าระบบ
+              {isSubmitting ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Save size={22} />} 
+              {isOnline ? "บันทึกข้อมูลเข้าระบบ" : "บันทึกงานเก็บไว้ในเครื่อง"}
             </button>
+            {!isOnline && <p className="text-center text-[10px] text-gray-400 font-bold mt-2">📍 ไม่ใช้เน็ต: ระบบจะอัปโหลดอัตโนมัติเมื่อพบสัญญาณ</p>}
           </div>
         )}
 
         {view === 'history' && (
           <div className="space-y-4 animate-slide-up">
-            <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg px-1"><History size={20} className="text-blue-600" /> ประวัติการทำงาน</h2>
-            {historyTasks.length === 0 ? (
+            <h2 className="font-bold text-gray-800 flex items-center gap-2 text-lg px-1"><History size={20} className="text-blue-600" /> ประวัติและงานรอส่ง</h2>
+            
+            {/* แสดงคิวงานออฟไลน์ที่รอส่ง */}
+            {offlineQueue.length > 0 && (
+              <div className="mb-6 space-y-3">
+                <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest px-1 flex items-center gap-1"><CloudOff size={12}/> รอซิงค์เมื่อมีเน็ต ({offlineQueue.length})</p>
+                {offlineQueue.map((t, i) => (
+                  <div key={`off-${i}`} className="bg-orange-50 p-4 rounded-2xl border border-orange-200 shadow-sm flex items-center justify-between opacity-80">
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-sm text-gray-800">{t?.name || t?.customerName || 'ไม่ระบุชื่อ'}</h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-bold text-white bg-orange-400 px-2 py-0.5 rounded tracking-tighter shadow-sm flex items-center gap-1"><Clock size={10}/> รอซิงค์</span>
+                        <span className="text-[10px] font-bold text-gray-500">{t?.completedAt}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {historyTasks.length === 0 && offlineQueue.length === 0 ? (
               <div className="text-center py-20 opacity-40"><p className="font-medium text-gray-500">ยังไม่มีประวัติการส่งงาน</p></div>
             ) : historyTasks.map((t, i) => (
                 <div key={i} onClick={() => { setSelectedHistoryTask(t); setView('history-detail'); }} className="bg-white p-4 rounded-2xl border-l-4 border-l-green-500 shadow-sm flex items-center justify-between active:bg-gray-50 transition-all cursor-pointer">
                   <div className="space-y-1">
                     <h3 className="font-bold text-sm text-gray-800">{t?.name || t?.customerName || 'ไม่ระบุชื่อ'}</h3>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded tracking-tighter">{t?.resultDesc}</span>
+                      <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded tracking-tighter flex items-center gap-1"><CheckCircle2 size={10}/> ส่งแล้ว</span>
                       <span className="text-[10px] font-bold text-indigo-400 bg-indigo-50 px-1.5 py-0.5 rounded uppercase tracking-tighter">{t?.dept}</span>
                       <span className="text-[10px] font-bold text-gray-400">{t?.completedAt}</span>
                     </div>
@@ -708,16 +797,29 @@ function MainApp() {
         <div className="fixed bottom-0 left-0 right-0 bg-white/95 border-t border-gray-100 p-3 pb-6 flex justify-around shadow-[0_-5px_20px_rgba(0,0,0,0.05)] z-40">
           <button onClick={() => { handleBackToHome(); setView('home'); }} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'home' || (view === 'form' && !searchQuery) ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><HomeIcon size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">หน้าหลัก</span></button>
           <button onClick={() => { setView('search'); }} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'search' || (view === 'form' && searchQuery) ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><Search size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">ค้นหา</span></button>
-          <button onClick={() => setView('history')} className={`flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'history' || view === 'history-detail' ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}><History size={24} strokeWidth={2.5} /><span className="text-[10px] uppercase tracking-widest font-black">ประวัติ</span></button>
+          <button onClick={() => setView('history')} className={`relative flex flex-col items-center gap-1 p-2 transition-all flex-1 ${view === 'history' || view === 'history-detail' ? 'text-blue-700 font-bold' : 'text-gray-400 opacity-60'}`}>
+            <History size={24} strokeWidth={2.5} />
+            {offlineQueue.length > 0 && <span className="absolute top-1 right-8 w-2.5 h-2.5 bg-orange-500 rounded-full border border-white animate-pulse"></span>}
+            <span className="text-[10px] uppercase tracking-widest font-black">ประวัติ</span>
+          </button>
         </div>
       )}
 
+      {/* อนิเมชันตอนบันทึกสำเร็จ (แยกสีตาม Online/Offline) */}
       {showSuccess && (
         <div className="fixed inset-0 z-[110] bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center animate-fade-in">
            <div className="bg-white p-10 rounded-3xl shadow-2xl border-2 border-gray-50 flex flex-col items-center animate-bounce-in">
-              <div className="bg-green-100 p-4 rounded-full mb-6 text-green-600"><CheckCircle2 size={80} /></div>
-              <h2 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">บันทึกเรียบร้อย!</h2>
-              <p className="text-gray-500 font-bold text-sm">ข้อมูลถูกส่งเข้าระบบสำเร็จแล้ว</p>
+              <div className={`p-4 rounded-full mb-6 ${showSuccess === 'offline' ? 'bg-orange-100 text-orange-500' : 'bg-green-100 text-green-600'}`}>
+                {showSuccess === 'offline' ? <CloudUpload size={80} /> : <CheckCircle2 size={80} />}
+              </div>
+              <h2 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">
+                {showSuccess === 'offline' ? 'เก็บลงเครื่องแล้ว!' : 'ส่งงานสำเร็จ!'}
+              </h2>
+              <p className="text-gray-500 font-bold text-sm px-4">
+                {showSuccess === 'offline' 
+                  ? 'ข้อมูลจะถูกอัปโหลดขึ้นเซิร์ฟเวอร์อัตโนมัติเมื่อพบสัญญาณอินเทอร์เน็ตครับ' 
+                  : 'ข้อมูลถูกส่งเข้าสู่ระบบส่วนกลางเรียบร้อยแล้ว'}
+              </p>
            </div>
         </div>
       )}
