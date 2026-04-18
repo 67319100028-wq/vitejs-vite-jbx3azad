@@ -54,6 +54,9 @@ function MainApp() {
   const [view, setView] = useState('login'); 
   const [currentUser, setCurrentUser] = useState(null);
   
+  // 🌐 สถานะอินเทอร์เน็ต
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
   const [loginEmpId, setLoginEmpId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -99,6 +102,18 @@ function MainApp() {
     { code: 'R13', desc: 'ไม่พบที่ตั้ง' },
   ];
 
+  // --- ติดตามสถานะเน็ต ---
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // --- Auto-Login แบบปลอดภัย ---
   useEffect(() => {
     const savedUser = localStorage.getItem('fieldCollectorUser');
@@ -118,7 +133,7 @@ function MainApp() {
 
   // --- Fetch Data from Firebase ---
   useEffect(() => {
-    if (currentUser && db) {
+    if (currentUser && db && isOnline) {
       try {
         const tasksRef = ref(db, 'pending_tasks');
         onValue(tasksRef, (snapshot) => {
@@ -144,7 +159,7 @@ function MainApp() {
         console.error("Fetch Data Error:", err);
       }
     }
-  }, [currentUser]);
+  }, [currentUser, isOnline]);
 
   const toggleVoiceInput = (field, setter, append = false) => {
     if (listeningField === field) {
@@ -179,6 +194,10 @@ function MainApp() {
 
   const handleLogin = (e) => {
     e.preventDefault();
+    if (!isOnline) {
+      setLoginError('ไม่มีสัญญาณอินเทอร์เน็ต ไม่สามารถล็อกอินได้');
+      return;
+    }
     if (!loginEmpId.trim() || !loginPassword.trim()) {
       setLoginError('กรุณากรอกรหัสพนักงานและรหัสผ่าน');
       return;
@@ -259,7 +278,7 @@ function MainApp() {
 
   const handlePhotoCapture = async (e) => {
     const file = e.target.files[0];
-    if (file && photos.length < 6 && location) { // 📸 ปรับเป็นสูงสุด 6 รูป
+    if (file && photos.length < 6 && location) {
       const stamped = await stampImage(file, location);
       setPhotos([...photos, stamped]);
     }
@@ -281,18 +300,20 @@ function MainApp() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!isOnline) {
+      alert("❌ ไม่สามารถส่งงานได้: กรุณาเชื่อมต่ออินเทอร์เน็ต");
+      return;
+    }
     if (!location) return alert('กรุณารอระบบระบุตำแหน่ง GPS');
     if (photos.length === 0) return alert('กรุณาแนบรูปภาพอย่างน้อย 1 รูป');
     if (!resultCode) return alert('กรุณาเลือกผลการลงพื้นที่');
     
     setIsSubmitting(true);
-
-    // ⏱️ เพิ่มระบบตัดจบถ้า Database ไม่ตอบสนองภายใน 15 วินาที
+    
+    // ตั้งเวลาเผื่อเน็ตช้า Database ไม่ตอบสนอง
     const timeout = setTimeout(() => {
-      if (isSubmitting) {
-        setIsSubmitting(false);
-        alert("⏱️ การเชื่อมต่อล่าช้า: ข้อมูลอาจไม่เข้า Database กรุณาเช็คเน็ตหรือให้เพื่อนเช็ค Rules ใน Firebase ครับ");
-      }
+      setIsSubmitting(false);
+      alert("⏱️ การส่งข้อมูลล่าช้า: ระบบอาจมีปัญหาหรืออินเทอร์เน็ตช้าเกินไป");
     }, 15000);
 
     const completed = {
@@ -308,18 +329,21 @@ function MainApp() {
     };
 
     if (db) {
-      push(ref(db, 'history_tasks'), completed)
-        .then(() => {
-          clearTimeout(timeout); // ยกเลิก timeout ถ้าส่งสำเร็จ
-          setIsSubmitting(false); 
-          setShowSuccess(true);
-          setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
-        })
-        .catch(err => {
-          clearTimeout(timeout);
-          alert("❌ Firebase ปฏิเสธการบันทึก: " + err.message + "\n(ลองให้เพื่อนเช็ค Database Rules เป็น true ดูนะครับ)");
-          setIsSubmitting(false);
-        });
+      push(ref(db, 'history_tasks'), completed).then(() => {
+        clearTimeout(timeout);
+        setIsSubmitting(false); 
+        setShowSuccess(true);
+        setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
+      }).catch(err => {
+        clearTimeout(timeout);
+        alert("บันทึกไม่สำเร็จ: " + err.message);
+        setIsSubmitting(false);
+      });
+    } else {
+      clearTimeout(timeout);
+      setIsSubmitting(false); 
+      setShowSuccess(true);
+      setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
     }
   };
 
@@ -346,6 +370,11 @@ function MainApp() {
   if (view === 'login') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
+        {!isOnline && (
+          <div className="absolute top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1 text-center font-black z-[100] animate-pulse uppercase">
+            Offline Mode - ไม่มีการเชื่อมต่ออินเทอร์เน็ต
+          </div>
+        )}
         <div className="absolute top-[-50px] right-[-50px] opacity-10"><Map size={300} /></div>
         <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 relative z-10">
           <div className="flex flex-col items-center mb-8 text-center">
@@ -375,9 +404,9 @@ function MainApp() {
                 {rememberMe ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} className="text-gray-400" />} จดจำการเข้าสู่ระบบ
               </button>
             </div>
-            <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all"><LogIn size={20} /> เข้าสู่ระบบ</button>
+            <button type="submit" disabled={!isOnline} className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all disabled:bg-gray-300"><LogIn size={20} /> เข้าสู่ระบบ</button>
           </form>
-          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 30.1</p></div>
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 30</p></div>
         </div>
       </div>
     );
@@ -385,6 +414,14 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 font-sans text-gray-900">
+      
+      {/* 🔴 แถบแจ้งเตือนเน็ตหลุด */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1.5 text-center font-black z-[200] animate-pulse uppercase tracking-widest">
+          Offline Mode - ไม่มีการเชื่อมต่ออินเทอร์เน็ต
+        </div>
+      )}
+
       {viewingPhoto && (
         <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4" onClick={() => setViewingPhoto(null)}>
           <X className="absolute top-6 right-6 text-white" size={32} />
@@ -490,28 +527,60 @@ function MainApp() {
 
         {view === 'form' && activeTask && (
           <div className="space-y-5 pb-10 animate-slide-up">
-            <header className="flex items-center gap-2 mb-2">
-              <button onClick={() => setView(searchQuery ? 'search' : 'home')} className="p-2 bg-white rounded-full border shadow-sm active:scale-90 transition-all"><ChevronLeft size={20}/></button>
-              <h2 className="font-bold text-gray-800">ย้อนกลับ</h2>
+            {/* 🛠️ เปลี่ยนปุ่มย้อนกลับให้ตรงตามรูปเป๊ะ */}
+            <header className="flex items-center gap-3 mb-3 pl-1">
+              <button onClick={() => setView(searchQuery ? 'search' : 'home')} className="p-2.5 bg-white rounded-full border border-gray-200 shadow-sm active:scale-90 transition-all text-gray-700">
+                <ChevronLeft size={20} />
+              </button>
+              <h2 className="font-bold text-gray-800 text-base">ย้อนกลับ</h2>
             </header>
 
+            {/* 🛠️ ปรับแก้ดีไซน์การ์ดข้อมูลลูกค้าตามภาพที่ส่งมาเป๊ะ 100% */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-               <div className="bg-blue-50 px-4 py-3 border-b border-blue-100 flex justify-between items-center"><h2 className="font-bold text-blue-900 flex items-center gap-2"><FileText size={18} /> ข้อมูลลูกค้า</h2></div>
-               <div className="p-4 space-y-2 text-sm">
-                  <div className="flex justify-between font-medium"><span>ชื่อ-สกุล:</span><span className="font-bold">{activeTask?.name || activeTask?.customerName}</span></div>
-                  <div className="flex justify-between font-medium"><span>แผนก / สัญญา:</span><span className="font-bold text-blue-600">{activeTask?.dept} | {activeTask?.contractNo || activeTask?.id}</span></div>
-                  <div className="bg-gray-50 p-2 rounded-lg flex flex-col gap-2 mt-2 font-bold text-xs border border-gray-100">
-                    <div className="flex justify-between items-center"><span className="text-gray-500 flex items-center gap-1"><Tag size={12}/> ประเภท:</span><span className="text-blue-800">{activeTask?.assetType || 'N/A'}</span></div>
-                    <div className="flex justify-between items-center border-t border-gray-200 pt-2"><span className="text-gray-500 flex items-center gap-1">ทะเบียนรถ:</span><span className="text-gray-900 text-sm bg-white px-2 py-0.5 rounded border">{activeTask?.plateNumber || 'N/A'}</span></div>
+               <div className="bg-[#f4f7fb] px-4 py-3 border-b border-[#e5ecf6] flex items-center gap-2">
+                 <FileText size={18} className="text-[#1e40af]" />
+                 <h2 className="font-bold text-[#1e40af] text-sm">ข้อมูลลูกค้า</h2>
+               </div>
+               <div className="p-4 space-y-3 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 text-xs">ชื่อ-สกุล:</span>
+                    <span className="font-bold text-gray-900">{activeTask?.name || activeTask?.customerName}</span>
                   </div>
-                  <div className="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-start gap-2"><MapPin size={14} className="text-red-500 mt-0.5 flex-shrink-0" /><p className="text-gray-700 text-xs leading-relaxed flex-1">{activeTask?.address}</p></div>
-                    <button onClick={() => openAddressInMaps(activeTask?.address)} className="mt-3 w-full bg-white border border-blue-200 text-blue-600 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 shadow-sm active:bg-blue-50 transition-all"><Navigation size={14} /> นำทางด้วย Google Maps</button>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 text-xs">แผนก / สัญญา:</span>
+                    <span className="font-bold text-blue-600">{activeTask?.dept} | {activeTask?.contractNo || activeTask?.id}</span>
                   </div>
-                  <p className="text-right font-bold text-red-600 text-xl mt-3 border-t pt-3 tracking-tight">{activeTask?.outstanding || 'N/A'}</p>
+                  
+                  {/* กรอบสีเทาอ่อนสำหรับใส่ ประเภท และ ทะเบียนรถ */}
+                  <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500 flex items-center gap-1 text-xs"><Tag size={12}/> ประเภท:</span>
+                      <span className="font-bold text-blue-800 text-xs">{activeTask?.assetType || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-t border-gray-200 pt-3">
+                      <span className="text-gray-500 text-xs">ทะเบียนรถ:</span>
+                      <span className="font-bold text-gray-900 text-xs bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">{activeTask?.plateNumber || 'N/A'}</span>
+                    </div>
+                  </div>
+
+                  {/* กรอบที่อยู่พร้อมปุ่มนำทาง Google Maps */}
+                  <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <MapPin size={14} className="text-red-500 mt-0.5 shrink-0" />
+                      <p className="text-gray-700 text-xs leading-relaxed">{activeTask?.address}</p>
+                    </div>
+                    <button onClick={() => openAddressInMaps(activeTask?.address)} className="w-full bg-white border border-blue-200 text-blue-600 py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-2 shadow-sm active:bg-blue-50 transition-all">
+                      <Navigation size={14} /> นำทางด้วย Google Maps
+                    </button>
+                  </div>
+                  
+                  <div className="border-t border-gray-100 pt-3 text-right">
+                    <span className="font-black text-red-600 text-[1.35rem] tracking-tight">{activeTask?.outstanding || 'N/A'}</span>
+                  </div>
                </div>
             </div>
 
+            {/* ส่วนด้านล่างที่เป็นฟอร์มบันทึกงาน (คงเดิมตามโค้ด V30 6 รูป ของคุณ King) */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-blue-500 space-y-4">
               <h3 className="font-bold text-gray-800 flex items-center gap-2"><ClipboardList size={18} className="text-blue-500" /> ข้อมูลปฏิบัติงาน</h3>
               <div>
@@ -543,7 +612,7 @@ function MainApp() {
                       <button onClick={(e) => { e.stopPropagation(); setPhotos(photos.filter((_, idx) => idx !== i)); }} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full shadow-lg"><X size={10} /></button>
                     </div>
                   ))}
-                  {photos.length < 6 && ( // 📸 ปรับเป็นสูงสุด 6 รูป
+                  {photos.length < 6 && (
                     <button onClick={() => location && fileInputRef.current.click()} disabled={!location} className={`aspect-video border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${!location ? 'border-gray-100 bg-gray-50/50 text-gray-200 cursor-not-allowed' : 'border-gray-200 text-gray-400 active:bg-gray-50'}`}>
                       {location ? <Camera size={24} /> : <Lock size={20} />}<span className="text-[10px] font-bold mt-1 uppercase">{location ? 'เพิ่มรูป' : 'รอ GPS...'}</span>
                     </button>
