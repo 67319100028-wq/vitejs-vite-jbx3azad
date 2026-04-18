@@ -286,6 +286,15 @@ function MainApp() {
     if (!resultCode) return alert('กรุณาเลือกผลการลงพื้นที่');
     
     setIsSubmitting(true);
+
+    // ⏱️ เพิ่มระบบตัดจบถ้า Database ไม่ตอบสนองภายใน 15 วินาที
+    const timeout = setTimeout(() => {
+      if (isSubmitting) {
+        setIsSubmitting(false);
+        alert("⏱️ การเชื่อมต่อล่าช้า: ข้อมูลอาจไม่เข้า Database กรุณาเช็คเน็ตหรือให้เพื่อนเช็ค Rules ใน Firebase ครับ");
+      }
+    }, 15000);
+
     const completed = {
       ...activeTask, 
       completedAt: new Date().toLocaleString('th-TH'), 
@@ -299,18 +308,18 @@ function MainApp() {
     };
 
     if (db) {
-      push(ref(db, 'history_tasks'), completed).then(() => {
-        setIsSubmitting(false); 
-        setShowSuccess(true);
-        setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
-      }).catch(err => {
-        alert("บันทึกไม่สำเร็จ: " + err.message);
-        setIsSubmitting(false);
-      });
-    } else {
-      setIsSubmitting(false); 
-      setShowSuccess(true);
-      setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
+      push(ref(db, 'history_tasks'), completed)
+        .then(() => {
+          clearTimeout(timeout); // ยกเลิก timeout ถ้าส่งสำเร็จ
+          setIsSubmitting(false); 
+          setShowSuccess(true);
+          setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
+        })
+        .catch(err => {
+          clearTimeout(timeout);
+          alert("❌ Firebase ปฏิเสธการบันทึก: " + err.message + "\n(ลองให้เพื่อนเช็ค Database Rules เป็น true ดูนะครับ)");
+          setIsSubmitting(false);
+        });
     }
   };
 
