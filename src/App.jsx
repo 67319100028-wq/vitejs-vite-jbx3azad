@@ -82,7 +82,7 @@ function MainApp() {
   const recognitionRef = useRef(null);
   const [listeningField, setListeningField] = useState(null);
 
-  // 📝 อัปเดตรายการ "ผลการลงพื้นที่" ตามที่คุณ King ต้องการ
+  // รายการผลการลงพื้นที่ล่าสุด
   const resultOptions = [
     { code: 'R01', desc: 'จบหน้างาน / ยึดรถ' },
     { code: 'R02', desc: 'จบหน้างาน / ชำระแล้ว 1งวด' },
@@ -259,7 +259,7 @@ function MainApp() {
 
   const handlePhotoCapture = async (e) => {
     const file = e.target.files[0];
-    if (file && photos.length < 4 && location) {
+    if (file && photos.length < 6 && location) { // 📸 ปรับเป็นสูงสุด 6 รูป
       const stamped = await stampImage(file, location);
       setPhotos([...photos, stamped]);
     }
@@ -308,7 +308,6 @@ function MainApp() {
         setIsSubmitting(false);
       });
     } else {
-      alert("จำลองการส่งข้อมูลสำเร็จ (เชื่อมต่อ DB ไม่ได้)");
       setIsSubmitting(false); 
       setShowSuccess(true);
       setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
@@ -523,9 +522,11 @@ function MainApp() {
               <div className="pt-2 border-t border-gray-100">
                 <div className="flex justify-between items-center mb-3">
                   <label className={`text-xs font-bold ${!location ? 'text-gray-300' : 'text-gray-700'}`}>ภาพถ่ายหน้างาน <span className="text-red-500">*</span> {!location && <span className="text-[9px] text-red-400 ml-1 font-black">(รอ GPS)</span>}</label>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${!location ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600'}`}>{photos.length}/4</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${!location ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600'}`}>{photos.length}/6</span>
                 </div>
+                
                 <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handlePhotoCapture} disabled={!location} />
+                
                 <div className="grid grid-cols-2 gap-3">
                   {photos.map((p, i) => (
                     <div key={i} className="relative aspect-video rounded-xl overflow-hidden border border-gray-200" onClick={() => setViewingPhoto(p)}>
@@ -533,7 +534,7 @@ function MainApp() {
                       <button onClick={(e) => { e.stopPropagation(); setPhotos(photos.filter((_, idx) => idx !== i)); }} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full shadow-lg"><X size={10} /></button>
                     </div>
                   ))}
-                  {photos.length < 4 && (
+                  {photos.length < 6 && ( // 📸 ปรับเป็นสูงสุด 6 รูป
                     <button onClick={() => location && fileInputRef.current.click()} disabled={!location} className={`aspect-video border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${!location ? 'border-gray-100 bg-gray-50/50 text-gray-200 cursor-not-allowed' : 'border-gray-200 text-gray-400 active:bg-gray-50'}`}>
                       {location ? <Camera size={24} /> : <Lock size={20} />}<span className="text-[10px] font-bold mt-1 uppercase">{location ? 'เพิ่มรูป' : 'รอ GPS...'}</span>
                     </button>
@@ -664,11 +665,7 @@ class ErrorBoundary extends React.Component {
     super(props);
     this.state = { hasError: false, error: null };
   }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
   render() {
     if (this.state.hasError) {
       return (
@@ -677,20 +674,10 @@ class ErrorBoundary extends React.Component {
             <AlertCircle size={60} className="text-red-500 mx-auto mb-4" />
             <h1 className="text-xl font-black text-gray-900 mb-2">อัปเดตข้อมูลระบบขัดข้อง</h1>
             <p className="text-sm text-gray-500 mb-6 font-bold">ข้อมูลเก่าที่บันทึกไว้ในเครื่องอาจไม่ตรงกับเวอร์ชันใหม่ครับ</p>
-            
             <div className="bg-red-50 p-4 rounded-xl text-left overflow-auto mb-6 text-[10px] font-mono text-red-800 border border-red-100">
               {this.state.error?.toString()}
             </div>
-
-            <button 
-              onClick={() => {
-                localStorage.clear();
-                window.location.reload();
-              }}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
-            >
-              ล้างข้อมูลเครื่องและรีสตาร์ทแอป
-            </button>
+            <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2">ล้างข้อมูลเครื่องและรีสตาร์ทแอป</button>
           </div>
         </div>
       );
