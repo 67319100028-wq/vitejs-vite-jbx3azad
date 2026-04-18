@@ -5,7 +5,7 @@ import {
   Home as HomeIcon, History, ChevronLeft, ChevronRight, Clock,
   Briefcase, Tag, ZoomIn, ExternalLink, Navigation, UserCheck,
   Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard,
-  Eye, EyeOff // <--- เพิ่มไอคอนลูกตากลับเข้ามาตรงนี้ครับ!
+  Eye, EyeOff
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -82,14 +82,20 @@ function MainApp() {
   const recognitionRef = useRef(null);
   const [listeningField, setListeningField] = useState(null);
 
+  // 📝 อัปเดตรายการ "ผลการลงพื้นที่" ตามที่คุณ King ต้องการ
   const resultOptions = [
     { code: 'R01', desc: 'จบหน้างาน / ยึดรถ' },
-    { code: 'R02', desc: 'จบหน้างาน / ชำระแล้ว' },
+    { code: 'R02', desc: 'จบหน้างาน / ชำระแล้ว 1งวด' },
+    { code: 'R03', desc: 'จบหน้างาน / ชำระแล้ว 2 งวด' },
+    { code: 'R04', desc: 'จบหน้างาน / ชำระแล้ว 3 งวด' },
+    { code: 'R05', desc: 'จบหน้างาน / ทันงวด ปิดบัญชี' },
     { code: 'R06', desc: 'นัดชำระ' },
+    { code: 'R07', desc: 'นัดคืนรถ' },
     { code: 'R08', desc: 'พบที่ตั้ง / พบรถ' },
     { code: 'R09', desc: 'พบที่ตั้ง / ไม่พบรถ' },
     { code: 'R10', desc: 'ย้ายออก / ลาออก' },
     { code: 'R11', desc: 'บ้านร้าง' },
+    { code: 'R12', desc: 'เสียชีวิต' },
     { code: 'R13', desc: 'ไม่พบที่ตั้ง' },
   ];
 
