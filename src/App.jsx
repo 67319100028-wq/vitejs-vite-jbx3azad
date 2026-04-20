@@ -5,7 +5,7 @@ import {
   Home as HomeIcon, History, ChevronLeft, ChevronRight, Clock,
   Briefcase, Tag, ZoomIn, ExternalLink, Navigation, UserCheck,
   Filter, Lock, UserCircle, LogIn, LogOut, Search, Mic, CheckSquare, Square, IdCard,
-  Eye, EyeOff, CloudOff, CloudUpload, RefreshCw
+  Eye, EyeOff, CloudOff, CloudUpload, RefreshCw, Download
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -67,6 +67,10 @@ function MainApp() {
 
   const [resultCode, setResultCode] = useState('');
   const [location, setLocation] = useState(null);
+  
+  // 🗺️ เพิ่ม State สำหรับเก็บชื่อที่อยู่ภาษาไทย
+  const [currentAddress, setCurrentAddress] = useState('กำลังค้นหาที่อยู่...');
+  
   const [locationError, setLocationError] = useState('');
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [photos, setPhotos] = useState([]); 
@@ -112,7 +116,6 @@ function MainApp() {
     };
   }, []);
 
-  // --- 🔄 ระบบ Auto-Sync ปรับปรุงใหม่ให้ทำงานทีละชิ้นพร้อม Timeout ---
   useEffect(() => {
     if (isOnline && offlineQueue.length > 0 && db && !isSyncing) {
       syncOfflineData();
@@ -126,15 +129,10 @@ function MainApp() {
 
     for (const task of currentQueue) {
       try {
-        // ใช้ Promise.race เพื่อดัก Timeout 20 วินาทีต่อการส่ง 1 ครั้ง
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 20000)
-        );
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 20000));
         const pushPromise = push(ref(db, 'history_tasks'), task);
-        
         await Promise.race([pushPromise, timeoutPromise]);
       } catch (error) {
-        console.error("Sync failed for a task:", error);
         failedQueue.push(task); 
       }
     }
@@ -149,57 +147,33 @@ function MainApp() {
     if (savedUser) {
       try {
         const userObj = JSON.parse(savedUser);
-        if (userObj && userObj.emp_id) {
-          setCurrentUser(userObj);
-          setView('home');
-        }
-      } catch(e) { 
-        setCurrentUser({ emp_id: savedUser, username: savedUser });
-        setView('home');
-      }
+        if (userObj && userObj.emp_id) { setCurrentUser(userObj); setView('home'); }
+      } catch(e) { setCurrentUser({ emp_id: savedUser, username: savedUser }); setView('home'); }
     }
   }, []);
 
   useEffect(() => {
     if (currentUser && db && isOnline) {
       try {
-        const tasksRef = ref(db, 'pending_tasks');
-        onValue(tasksRef, (snapshot) => {
+        onValue(ref(db, 'pending_tasks'), (snapshot) => {
           const data = snapshot.val();
-          if (data) {
-            setPendingTasks(Object.keys(data).map(key => ({ id: key, ...data[key] })));
-          } else {
-            setPendingTasks(initialTasks);
-          }
+          if (data) setPendingTasks(Object.keys(data).map(key => ({ id: key, ...data[key] })));
+          else setPendingTasks(initialTasks);
         });
 
-        const historyRef = ref(db, 'history_tasks');
-        onValue(historyRef, (snapshot) => {
+        onValue(ref(db, 'history_tasks'), (snapshot) => {
           const data = snapshot.val();
-          if (data) {
-            const list = Object.keys(data).map(key => ({ dbId: key, ...data[key] })).reverse();
-            setHistoryTasks(list);
-          } else {
-            setHistoryTasks([]);
-          }
+          if (data) setHistoryTasks(Object.keys(data).map(key => ({ dbId: key, ...data[key] })).reverse());
+          else setHistoryTasks([]);
         });
-      } catch (err) {
-        console.error("Fetch Data Error:", err);
-      }
+      } catch (err) { console.error("Fetch Data Error:", err); }
     }
   }, [currentUser, isOnline]);
 
   const toggleVoiceInput = (field, setter, append = false) => {
-    if (listeningField === field) {
-      recognitionRef.current?.stop();
-      setListeningField(null);
-      return;
-    }
+    if (listeningField === field) { recognitionRef.current?.stop(); setListeningField(null); return; }
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('เบราว์เซอร์ของคุณไม่รองรับระบบสั่งงานด้วยเสียง');
-      return;
-    }
+    if (!SpeechRecognition) return alert('เบราว์เซอร์ของคุณไม่รองรับระบบสั่งงานด้วยเสียง');
     try {
       const recognition = new SpeechRecognition();
       recognition.lang = 'th-TH';
@@ -222,31 +196,17 @@ function MainApp() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (!isOnline && !currentUser) {
-      setLoginError('ไม่มีสัญญาณอินเทอร์เน็ตสำหรับการล็อกอินครั้งแรก');
-      return;
-    }
-    if (!loginEmpId.trim() || !loginPassword.trim()) {
-      setLoginError('กรุณากรอกรหัสพนักงานและรหัสผ่าน');
-      return;
-    }
-    if (!db) {
-      setLoginError('ไม่สามารถเชื่อมต่อฐานข้อมูลได้ กรุณาลองใหม่');
-      return;
-    }
+    if (!isOnline && !currentUser) return setLoginError('ไม่มีสัญญาณอินเทอร์เน็ตสำหรับการล็อกอินครั้งแรก');
+    if (!loginEmpId.trim() || !loginPassword.trim()) return setLoginError('กรุณากรอกรหัสพนักงานและรหัสผ่าน');
+    if (!db) return setLoginError('ไม่สามารถเชื่อมต่อฐานข้อมูลได้ กรุณาลองใหม่');
 
-    const userListRef = ref(db, 'user');
-    onValue(userListRef, (snapshot) => {
+    onValue(ref(db, 'user'), (snapshot) => {
       const allUsers = snapshot.val();
       if (allUsers) {
-        const foundKey = Object.keys(allUsers).find(key => 
-          (allUsers[key].emp_id === loginEmpId || key === loginEmpId) && 
-          allUsers[key].password === loginPassword
-        );
+        const foundKey = Object.keys(allUsers).find(key => (allUsers[key].emp_id === loginEmpId || key === loginEmpId) && allUsers[key].password === loginPassword);
         if (foundKey) {
           const userObj = { emp_id: allUsers[foundKey].emp_id || foundKey, username: allUsers[foundKey].username || foundKey };
-          setLoginError('');
-          setCurrentUser(userObj);
+          setLoginError(''); setCurrentUser(userObj);
           if (rememberMe) localStorage.setItem('fieldCollectorUser', JSON.stringify(userObj));
           setView('home');
         } else { setLoginError('รหัสพนักงานหรือรหัสผ่านไม่ถูกต้อง'); }
@@ -257,17 +217,44 @@ function MainApp() {
   const handleLogout = () => {
     setCurrentUser(null); setLoginEmpId(''); setLoginPassword(''); setSearchQuery('');
     localStorage.removeItem('fieldCollectorUser'); 
-    recognitionRef.current?.stop();
-    setView('login');
+    recognitionRef.current?.stop(); setView('login');
+  };
+
+  // 🗺️ ฟังก์ชันแปลงพิกัดเป็นชื่อสถานที่ (Reverse Geocoding)
+  const getThaiAddress = async (lat, lng) => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+      const data = await res.json();
+      if(data && data.address) {
+        const addr = data.address;
+        const parts = [];
+        if (addr.house_number) parts.push(`บ้านเลขที่ ${addr.house_number}`);
+        if (addr.road) parts.push(`ถ.${addr.road}`);
+        if (addr.suburb || addr.village) parts.push(`ต./แขวง ${addr.suburb || addr.village}`);
+        if (addr.city_district || addr.county || addr.town || addr.district) parts.push(`อ./เขต ${addr.city_district || addr.county || addr.town || addr.district}`);
+        if (addr.city || addr.state || addr.province) parts.push(`จ.${addr.city || addr.state || addr.province}`);
+        return parts.length > 0 ? parts.join(' ') : 'ไม่สามารถระบุที่อยู่ได้ชัดเจน';
+      }
+      return 'ไม่พบข้อมูลที่อยู่แบบละเอียด';
+    } catch (err) {
+      return 'ไม่สามารถดึงข้อมูลสถานที่ได้ (อาจไม่มีสัญญาณเน็ต)';
+    }
   };
 
   const handleGetLocation = () => {
-    setIsGettingLocation(true); setLocationError('');
+    setIsGettingLocation(true); setLocationError(''); setCurrentAddress('กำลังวิเคราะห์สถานที่จากดาวเทียม...');
     if (!navigator.geolocation) {
       setLocationError('เบราว์เซอร์ไม่รองรับ GPS'); setIsGettingLocation(false); return;
     }
     navigator.geolocation.getCurrentPosition(
-      (p) => { setLocation({ lat: p.coords.latitude, lng: p.coords.longitude }); setIsGettingLocation(false); },
+      async (p) => { 
+        setLocation({ lat: p.coords.latitude, lng: p.coords.longitude }); 
+        setIsGettingLocation(false); 
+        
+        // 🚀 ดึงที่อยู่หลังจากได้พิกัด
+        const addrText = await getThaiAddress(p.coords.latitude, p.coords.longitude);
+        setCurrentAddress(addrText);
+      },
       () => { setLocationError('กรุณาเปิด GPS'); setIsGettingLocation(false); },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -277,8 +264,8 @@ function MainApp() {
     if (view === 'form' && activeTask && !location && !isGettingLocation) handleGetLocation();
   }, [view, activeTask]);
 
-  // --- 📸 ปรับปรุง: ระบบลดขนาดรูปภาพ (Resizing) ก่อนเซฟลงเครื่อง/ส่งฐานข้อมูล ---
-  const stampImage = (file, currentLocation) => {
+  // 📸 ปรับปรุง: สแตมป์ที่อยู่ลงรูปภาพเป็นแถบสีดำทึบด้านล่าง เพื่อให้อ่านง่าย
+  const stampImage = (file, currentLocation, addressText) => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -286,34 +273,37 @@ function MainApp() {
         img.onload = () => {
           const canvas = document.createElement('canvas');
           
-          // กำหนดขนาดสูงสุดของรูป (ไม่เกิน 1024px เพื่อความไว)
           let width = img.width;
           let height = img.height;
           const maxDim = 1024;
-          if (width > height) {
-            if (width > maxDim) { height *= maxDim / width; width = maxDim; }
-          } else {
-            if (height > maxDim) { width *= maxDim / height; height = maxDim; }
-          }
+          if (width > height) { if (width > maxDim) { height *= maxDim / width; width = maxDim; } } 
+          else { if (height > maxDim) { width *= maxDim / height; height = maxDim; } }
           
-          canvas.width = width; 
-          canvas.height = height;
+          canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
           
           const timestamp = new Date().toLocaleString('th-TH');
           const gpsText = currentLocation ? `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}` : 'GPS: ไม่พบพิกัด';
-          const textLines = [timestamp, gpsText];
           
-          // ปรับขนาดฟอนต์ตามขนาดรูปใหม่
           const fontSize = Math.max(14, Math.floor(width * 0.035));
           ctx.font = `bold ${fontSize}px sans-serif`;
-          ctx.fillStyle = 'rgba(0,0,0,0.6)';
-          ctx.fillRect(width - (fontSize * 15), height - (fontSize * 3.5), fontSize * 15, fontSize * 3.5);
-          ctx.fillStyle = 'white';
-          textLines.forEach((l, i) => ctx.fillText(l, width - (fontSize * 14.5), height - (fontSize * 2.2) + (i * fontSize * 1.2)));
           
-          // บีบอัดเป็น JPEG คุณภาพ 0.6 (ประหยัดพื้นที่มาก)
+          // 🖤 สร้างแถบสีดำทึบด้านล่างรูป เพื่อให้ตัวหนังสืออ่านง่ายและดูเป็นระเบียบ
+          const barHeight = fontSize * 4.5;
+          ctx.fillStyle = 'rgba(0,0,0,0.65)';
+          ctx.fillRect(0, height - barHeight, width, barHeight);
+          
+          // 📝 พิมพ์ข้อความ 3 บรรทัด
+          ctx.fillStyle = 'white';
+          ctx.fillText(`🕒 ${timestamp}`, 20, height - barHeight + (fontSize * 1.2));
+          ctx.fillText(`📡 ${gpsText}`, 20, height - barHeight + (fontSize * 2.5));
+          
+          // ตัดคำสถานที่ถ้ามันยาวเกินไป
+          const maxChars = 55;
+          const displayAddress = addressText.length > maxChars ? addressText.substring(0, maxChars) + "..." : addressText;
+          ctx.fillText(`📍 ${displayAddress}`, 20, height - barHeight + (fontSize * 3.8));
+          
           resolve(canvas.toDataURL('image/jpeg', 0.6));
         };
         img.src = e.target.result;
@@ -325,23 +315,20 @@ function MainApp() {
   const handlePhotoCapture = async (e) => {
     const file = e.target.files[0];
     if (file && photos.length < 6 && location) {
-      const stamped = await stampImage(file, location);
+      const stamped = await stampImage(file, location, currentAddress);
       setPhotos([...photos, stamped]);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleOpenTask = (task) => {
-    setResultCode(''); setTaskNote(''); setLocation(null); setPhotos([]);
-    recognitionRef.current?.stop();
-    setActiveTask(task);
-    setView('form');
+    setResultCode(''); setTaskNote(''); setLocation(null); setPhotos([]); setCurrentAddress('กำลังวิเคราะห์สถานที่...');
+    recognitionRef.current?.stop(); setActiveTask(task); setView('form');
   };
 
   const handleBackToHome = () => {
     if (recognitionRef.current) recognitionRef.current.stop();
-    setActiveTask(null);
-    setView('home');
+    setActiveTask(null); setView('home');
   };
 
   const handleSubmit = (e) => {
@@ -360,6 +347,7 @@ function MainApp() {
       recorded_by_name: currentUser?.username || 'N/A',
       resultDesc: resultOptions.find(r => r.code === resultCode)?.desc,
       location, 
+      addressDetails: currentAddress, // 📌 บันทึกชื่อสถานที่ลง DB ด้วย
       photos, 
       taskNote, 
       resultCode
@@ -369,13 +357,11 @@ function MainApp() {
       const newQueue = [completed, ...offlineQueue];
       setOfflineQueue(newQueue);
       localStorage.setItem('offlineTaskQueue', JSON.stringify(newQueue));
-      setIsSubmitting(false); 
-      setShowSuccess('offline'); 
+      setIsSubmitting(false); setShowSuccess('offline'); 
       setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2500);
       return;
     }
 
-    // มีเน็ต แต่เผื่อเน็ตแกว่ง หรือรูปยังใหญ่อยู่ ใช้ Timeout 15 วิ
     const timeout = setTimeout(() => {
       if (isSubmitting) {
         setIsSubmitting(false);
@@ -390,8 +376,7 @@ function MainApp() {
     if (db) {
       push(ref(db, 'history_tasks'), completed).then(() => {
         clearTimeout(timeout);
-        setIsSubmitting(false); 
-        setShowSuccess('online'); 
+        setIsSubmitting(false); setShowSuccess('online'); 
         setTimeout(() => { setShowSuccess(false); handleBackToHome(); }, 2000);
       }).catch(err => {
         clearTimeout(timeout);
@@ -416,7 +401,7 @@ function MainApp() {
   });
 
   const MapPreview = ({ lat, lng }) => (
-    <div className="w-full h-40 rounded-xl overflow-hidden border border-gray-200 mt-2 shadow-inner bg-gray-50">
+    <div className="w-full h-36 rounded-xl overflow-hidden border border-gray-200 mt-2 shadow-inner bg-gray-50">
       <iframe title="map" width="100%" height="100%" frameBorder="0" src={`https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`}></iframe>
     </div>
   );
@@ -433,7 +418,7 @@ function MainApp() {
           </div>
         )}
         <div className="absolute top-[-50px] right-[-50px] opacity-10"><Map size={300} /></div>
-        <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 relative z-10">
+        <div className="w-full max-w-sm bg-white rounded-[32px] shadow-2xl p-8 relative z-10">
           <div className="flex flex-col items-center mb-8 text-center">
             <div className="bg-blue-100 p-4 rounded-full mb-4 border border-blue-200"><MapPin size={40} className="text-blue-600" /></div>
             <h1 className="text-2xl font-black text-blue-900 tracking-tight">เข้าสู่ระบบ</h1>
@@ -445,14 +430,14 @@ function MainApp() {
               <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-wider">รหัสพนักงาน</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><IdCard size={18} className="text-gray-400" /></div>
-                <input type="text" value={loginEmpId} onChange={(e) => setLoginEmpId(e.target.value)} placeholder="รหัสพนักงาน" className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all uppercase" />
+                <input type="text" value={loginEmpId} onChange={(e) => setLoginEmpId(e.target.value)} placeholder="รหัสพนักงาน" className="w-full pl-11 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all uppercase" />
               </div>
             </div>
             <div>
               <label className="block text-xs font-black text-gray-500 uppercase mb-2 tracking-wider">รหัสผ่าน</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Lock size={18} className="text-gray-400" /></div>
-                <input type={showPassword ? "text" : "password"} value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" />
+                <input type={showPassword ? "text" : "password"} value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" className="w-full pl-11 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:bg-white focus:border-blue-500 outline-none transition-all" />
                 <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
               </div>
             </div>
@@ -463,7 +448,7 @@ function MainApp() {
             </div>
             <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all"><LogIn size={20} /> เข้าสู่ระบบ</button>
           </form>
-          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 31.1</p></div>
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 32.0</p></div>
         </div>
       </div>
     );
@@ -473,7 +458,7 @@ function MainApp() {
     <div className="min-h-screen bg-gray-50 pb-24 font-sans text-gray-900">
       {!isOnline ? (
         <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-[10px] py-1 text-center font-black z-[200] animate-pulse uppercase tracking-widest flex items-center justify-center gap-1">
-          <CloudOff size={12}/> Offline Mode - โหมดบันทึกข้อมูลแบบไม่มีเน็ต
+          <CloudOff size={12}/> Offline Mode - โหมดออฟไลน์
         </div>
       ) : isSyncing ? (
         <div className="fixed top-0 left-0 right-0 bg-orange-500 text-white text-[10px] py-1 text-center font-black z-[200] uppercase tracking-widest flex items-center justify-center gap-2">
@@ -481,10 +466,21 @@ function MainApp() {
         </div>
       ) : null}
 
+      {/* 🖼️ ภาพเต็มจอ + ปุ่มดาวน์โหลด */}
       {viewingPhoto && (
-        <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4" onClick={() => setViewingPhoto(null)}>
-          <X className="absolute top-6 right-6 text-white" size={32} />
-          <img src={viewingPhoto} className="max-w-full max-h-[85vh] object-contain rounded-lg" />
+        <div className="fixed inset-0 z-[600] bg-black/95 flex flex-col items-center justify-center p-4">
+          <button onClick={() => setViewingPhoto(null)} className="absolute top-6 right-6 text-white p-2 active:scale-90 transition-transform"><X size={32} /></button>
+          
+          <img src={viewingPhoto} className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl border border-white/10" alt="Preview" />
+          
+          <a 
+            href={viewingPhoto} 
+            download={`evidence-${Date.now()}.jpg`} 
+            className="mt-8 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-8 py-3.5 rounded-full font-black text-sm shadow-[0_10px_20px_rgba(37,99,235,0.4)] active:scale-95 transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Download size={20} /> ดาวน์โหลดและเซฟลงเครื่อง
+          </a>
         </div>
       )}
 
@@ -598,6 +594,7 @@ function MainApp() {
               </button>
               <h2 className="font-bold text-gray-800 text-base">ย้อนกลับ</h2>
             </header>
+
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                <div className="bg-[#f4f7fb] px-4 py-3 border-b border-[#e5ecf6] flex items-center gap-2">
                  <FileText size={18} className="text-[#1e40af]" />
@@ -612,6 +609,7 @@ function MainApp() {
                     <span className="text-gray-600 text-xs">แผนก / สัญญา:</span>
                     <span className="font-bold text-blue-600">{activeTask?.dept} | {activeTask?.contractNo || activeTask?.id}</span>
                   </div>
+                  
                   <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-gray-500 flex items-center gap-1 text-xs"><Tag size={12}/> ประเภท:</span>
@@ -622,6 +620,7 @@ function MainApp() {
                       <span className="font-bold text-gray-900 text-xs bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">{activeTask?.plateNumber || 'N/A'}</span>
                     </div>
                   </div>
+
                   <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 space-y-3">
                     <div className="flex items-start gap-2">
                       <MapPin size={14} className="text-red-500 mt-0.5 shrink-0" />
@@ -631,6 +630,7 @@ function MainApp() {
                       <Navigation size={14} /> นำทางด้วย Google Maps
                     </button>
                   </div>
+                  
                   <div className="border-t border-gray-100 pt-3 text-right">
                     <span className="font-black text-red-600 text-[1.35rem] tracking-tight">{activeTask?.outstanding || 'N/A'}</span>
                   </div>
@@ -639,6 +639,7 @@ function MainApp() {
 
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-blue-500 space-y-4">
               <h3 className="font-bold text-gray-800 flex items-center gap-2"><ClipboardList size={18} className="text-blue-500" /> ข้อมูลปฏิบัติงาน</h3>
+              
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">พิกัด GPS อัตโนมัติ <span className="text-red-500">*</span></label>
                 {!location ? (
@@ -647,17 +648,24 @@ function MainApp() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="flex justify-between items-center px-1"><p className="text-[10px] font-mono font-bold text-green-600">{location.lat.toFixed(6)}, {location.lng.toFixed(6)}</p><button onClick={handleGetLocation} className="text-[10px] text-blue-600 font-bold underline">อัปเดตพิกัด</button></div>
+                    <div className="flex justify-between items-center px-1">
+                      <p className="text-[10px] font-mono font-bold text-green-600 tracking-tighter bg-green-50 px-2 py-1 rounded border border-green-100">{location.lat.toFixed(6)}, {location.lng.toFixed(6)}</p>
+                      <button onClick={handleGetLocation} className="text-[10px] text-blue-600 font-bold underline">อัปเดตพิกัด</button>
+                    </div>
+                    <p className="text-[10px] font-bold text-gray-500 px-1 line-clamp-2">📍 {currentAddress}</p>
                     <MapPreview lat={location.lat} lng={location.lng} />
                   </div>
                 )}
               </div>
+              
               <div className="pt-2 border-t border-gray-100">
                 <div className="flex justify-between items-center mb-3">
                   <label className={`text-xs font-bold ${!location ? 'text-gray-300' : 'text-gray-700'}`}>ภาพถ่ายหน้างาน <span className="text-red-500">*</span> {!location && <span className="text-[9px] text-red-400 ml-1 font-black">(รอ GPS)</span>}</label>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${!location ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600'}`}>{photos.length}/6</span>
                 </div>
+                
                 <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handlePhotoCapture} disabled={!location} />
+                
                 <div className="grid grid-cols-2 gap-3">
                   {photos.map((p, i) => (
                     <div key={i} className="relative aspect-video rounded-xl overflow-hidden border border-gray-200" onClick={() => setViewingPhoto(p)}>
@@ -672,6 +680,7 @@ function MainApp() {
                   )}
                 </div>
               </div>
+
               <div className="pt-3 border-t border-gray-100">
                 <div className="flex justify-between items-center mb-2">
                   <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">หมายเหตุ / รายละเอียด <span className="text-red-500">*</span></label>
@@ -680,6 +689,7 @@ function MainApp() {
                 <textarea value={taskNote} onChange={(e) => setTaskNote(e.target.value)} placeholder={listeningField === 'note' ? "กำลังรอรับเสียง..." : "กรุณาระบุรายละเอียดการลงพื้นที่..."} className={`w-full p-3 border rounded-xl text-sm outline-none min-h-[100px] transition-all ${listeningField === 'note' ? 'bg-red-50/30 border-red-300 ring-2 ring-red-500/20' : 'bg-gray-50 focus:bg-white border-gray-200'}`} />
               </div>
             </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 border-l-4 border-l-green-500">
                <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><CheckCircle2 size={18} className="text-green-500" /> ผลการลงพื้นที่ <span className="text-red-500">*</span></h3>
                <select value={resultCode} onChange={(e) => setResultCode(e.target.value)} className="w-full p-3 border rounded-xl bg-white text-sm font-bold outline-none focus:ring-2 focus:ring-green-500/20" required>
@@ -687,6 +697,7 @@ function MainApp() {
                 {resultOptions.map(o => <option key={o.code} value={o.code}>{o.desc}</option>)}
                </select>
             </div>
+
             <button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-blue-700 text-white py-4 rounded-2xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:bg-gray-300">
               {isSubmitting ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" /> : <Save size={22} />} 
               {isOnline ? "บันทึกข้อมูลเข้าระบบ" : "บันทึกงานเก็บไว้ในเครื่อง"}
@@ -747,6 +758,7 @@ function MainApp() {
                 <div className="flex justify-between font-medium items-center border-t border-gray-50 pt-2 mt-2"><span>ผู้บันทึก:</span><span className="font-bold text-blue-600 flex items-center gap-1"><UserCheck size={14}/> {selectedHistoryTask?.recorded_by_name || selectedHistoryTask?.recordedBy || 'N/A'}</span></div>
               </div>
             </div>
+            
             <div className="bg-white rounded-2xl shadow-sm border border-l-4 border-l-blue-500 p-4 space-y-4">
               <h3 className="font-bold text-gray-800">ข้อมูลสถานที่</h3>
               {selectedHistoryTask.location && (
@@ -755,15 +767,32 @@ function MainApp() {
                   <button onClick={() => openInGoogleMaps(selectedHistoryTask.location.lat, selectedHistoryTask.location.lng)} className="w-full bg-blue-50 text-blue-600 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-blue-100 active:bg-blue-100"><Map size={14}/> เปิดใน Google Maps <ExternalLink size={12}/></button>
                 </>
               )}
+              {selectedHistoryTask.addressDetails && (
+                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 mt-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">สถานที่อ้างอิง</p>
+                  <p className="text-xs text-gray-700 leading-relaxed font-medium">{selectedHistoryTask.addressDetails}</p>
+                </div>
+              )}
+              
+              {/* 📸 ปรับปรุง: เพิ่มคำแนะนำให้กดดูรูปเพื่อดาวน์โหลด */}
               {selectedHistoryTask.photos?.length > 0 && (
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  {selectedHistoryTask.photos.map((p, i) => (
-                    <div key={i} className="rounded-xl overflow-hidden border aspect-video" onClick={() => setViewingPhoto(p)}><img src={p} className="w-full h-full object-cover" /></div>
-                  ))}
+                <div className="pt-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">แตะที่รูปภาพเพื่อขยายและดาวน์โหลด</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedHistoryTask.photos.map((p, i) => (
+                      <div key={i} className="rounded-xl overflow-hidden border aspect-video relative group cursor-pointer" onClick={() => setViewingPhoto(p)}>
+                        <img src={p} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                           <ZoomIn className="text-white" size={24} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               {selectedHistoryTask.taskNote && <p className="bg-gray-50 p-3 rounded-xl text-sm italic text-gray-600 border border-dashed leading-relaxed">"{selectedHistoryTask.taskNote}"</p>}
             </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-l-4 border-l-green-500 p-4">
               <h3 className="font-bold text-gray-800 mb-2">ผลการลงพื้นที่</h3>
               <div className="bg-green-50 p-3 rounded-xl border border-green-100 font-bold text-green-800 shadow-inner text-center">{selectedHistoryTask.resultDesc}</div>
