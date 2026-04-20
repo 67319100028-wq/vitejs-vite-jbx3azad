@@ -235,11 +235,15 @@ function MainApp() {
         }
         if (addr.suburb || addr.village) {
             let sub = addr.suburb || addr.village;
-            parts.push(`${sub.startsWith('แขวง') || sub.startsWith('ตำบล') ? '' : 'ต./แขวง '}${sub}`);
+            // 🛠️ ตัดคำว่าตำบลทิ้ง แล้วบังคับใช้คำว่า "แขวง" แทน
+            sub = sub.replace(/^ตำบล\s*/, '');
+            parts.push(`${sub.startsWith('แขวง') ? '' : 'แขวง '}${sub}`);
         }
         if (addr.city_district || addr.county || addr.town || addr.district) {
             let dist = addr.city_district || addr.county || addr.town || addr.district;
-            parts.push(`${dist.startsWith('เขต') || dist.startsWith('อำเภอ') ? '' : 'อ./เขต '}${dist}`);
+            // 🛠️ ตัดคำว่าอำเภอทิ้ง แล้วบังคับใช้คำว่า "เขต" แทนให้เข้าคู่กัน
+            dist = dist.replace(/^อำเภอ\s*/, '');
+            parts.push(`${dist.startsWith('เขต') ? '' : 'เขต '}${dist}`);
         }
         if (addr.city || addr.state || addr.province) {
             let prov = addr.city || addr.state || addr.province;
