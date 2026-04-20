@@ -68,7 +68,7 @@ function MainApp() {
   const [resultCode, setResultCode] = useState('');
   const [location, setLocation] = useState(null);
   
-  // 🗺️ เพิ่ม State สำหรับเก็บชื่อที่อยู่ภาษาไทย
+  // 🗺️ State สำหรับเก็บชื่อที่อยู่ภาษาไทย
   const [currentAddress, setCurrentAddress] = useState('กำลังค้นหาที่อยู่...');
   
   const [locationError, setLocationError] = useState('');
@@ -220,7 +220,7 @@ function MainApp() {
     recognitionRef.current?.stop(); setView('login');
   };
 
-  // 🗺️ ฟังก์ชันแปลงพิกัดเป็นชื่อสถานที่ (Reverse Geocoding)
+  // 🗺️ ฟังก์ชันแปลงพิกัดแบบฉลาด (ไม่ใส่คำนำหน้าซ้ำซ้อน)
   const getThaiAddress = async (lat, lng) => {
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
@@ -228,11 +228,23 @@ function MainApp() {
       if(data && data.address) {
         const addr = data.address;
         const parts = [];
-        if (addr.house_number) parts.push(`บ้านเลขที่ ${addr.house_number}`);
-        if (addr.road) parts.push(`ถ.${addr.road}`);
-        if (addr.suburb || addr.village) parts.push(`ต./แขวง ${addr.suburb || addr.village}`);
-        if (addr.city_district || addr.county || addr.town || addr.district) parts.push(`อ./เขต ${addr.city_district || addr.county || addr.town || addr.district}`);
-        if (addr.city || addr.state || addr.province) parts.push(`จ.${addr.city || addr.state || addr.province}`);
+        if (addr.house_number) parts.push(`เลขที่ ${addr.house_number}`);
+        
+        if (addr.road) {
+            parts.push(`${addr.road.startsWith('ถนน') || addr.road.startsWith('ซอย') ? '' : 'ถ.'}${addr.road}`);
+        }
+        if (addr.suburb || addr.village) {
+            let sub = addr.suburb || addr.village;
+            parts.push(`${sub.startsWith('แขวง') || sub.startsWith('ตำบล') ? '' : 'ต./แขวง '}${sub}`);
+        }
+        if (addr.city_district || addr.county || addr.town || addr.district) {
+            let dist = addr.city_district || addr.county || addr.town || addr.district;
+            parts.push(`${dist.startsWith('เขต') || dist.startsWith('อำเภอ') ? '' : 'อ./เขต '}${dist}`);
+        }
+        if (addr.city || addr.state || addr.province) {
+            let prov = addr.city || addr.state || addr.province;
+            parts.push(`${prov.startsWith('กรุงเทพ') || prov.startsWith('จังหวัด') ? '' : 'จ.'}${prov}`);
+        }
         return parts.length > 0 ? parts.join(' ') : 'ไม่สามารถระบุที่อยู่ได้ชัดเจน';
       }
       return 'ไม่พบข้อมูลที่อยู่แบบละเอียด';
@@ -251,7 +263,7 @@ function MainApp() {
         setLocation({ lat: p.coords.latitude, lng: p.coords.longitude }); 
         setIsGettingLocation(false); 
         
-        // 🚀 ดึงที่อยู่หลังจากได้พิกัด
+        // ดึงที่อยู่หลังจากได้พิกัด
         const addrText = await getThaiAddress(p.coords.latitude, p.coords.longitude);
         setCurrentAddress(addrText);
       },
@@ -264,7 +276,7 @@ function MainApp() {
     if (view === 'form' && activeTask && !location && !isGettingLocation) handleGetLocation();
   }, [view, activeTask]);
 
-  // 📸 ปรับปรุง: สแตมป์ที่อยู่ลงรูปภาพเป็นแถบสีดำทึบด้านล่าง เพื่อให้อ่านง่าย
+  // 📸 ปรับปรุง: ระบบตัดคำ (Word Wrap) ถ้ายาวเกินกรอบรูป
   const stampImage = (file, currentLocation, addressText) => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -275,7 +287,7 @@ function MainApp() {
           
           let width = img.width;
           let height = img.height;
-          const maxDim = 1024;
+          const maxDim = 1024; // ย่อขนาดเพื่อความไว
           if (width > height) { if (width > maxDim) { height *= maxDim / width; width = maxDim; } } 
           else { if (height > maxDim) { width *= maxDim / height; height = maxDim; } }
           
@@ -286,23 +298,57 @@ function MainApp() {
           const timestamp = new Date().toLocaleString('th-TH');
           const gpsText = currentLocation ? `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}` : 'GPS: ไม่พบพิกัด';
           
-          const fontSize = Math.max(14, Math.floor(width * 0.035));
+          const fontSize = Math.max(16, Math.floor(width * 0.035)); // ปรับตัวหนังสือให้ใหญ่กำลังดี
           ctx.font = `bold ${fontSize}px sans-serif`;
           
-          // 🖤 สร้างแถบสีดำทึบด้านล่างรูป เพื่อให้ตัวหนังสืออ่านง่ายและดูเป็นระเบียบ
-          const barHeight = fontSize * 4.5;
+          // ✂️ ปัญญาประดิษฐ์ตัดคำ (Word Wrapper)
+          const wrapTextForThai = (context, text, maxWidth) => {
+            let words = text.split(' '); // แยกด้วยเว้นวรรคที่เราทำไว้ใน getThaiAddress
+            let lines = [];
+            let currentLine = '';
+            for (let i = 0; i < words.length; i++) {
+              let word = words[i];
+              let testLine = currentLine === '' ? word : currentLine + ' ' + word;
+              let testWidth = context.measureText(testLine).width;
+              if (testWidth > maxWidth && currentLine !== '') {
+                lines.push(currentLine);
+                currentLine = word; // ปัดคำที่ยาวเกินลงบรรทัดใหม่
+              } else {
+                currentLine = testLine;
+              }
+            }
+            if (currentLine) lines.push(currentLine);
+            return lines;
+          };
+
+          const maxTextWidth = width - 40; // เว้นขอบซ้าย 20 ขวา 20
+          const addressLines = wrapTextForThai(ctx, `📍 ${addressText}`, maxTextWidth);
+          
+          // คำนวณความสูงของกรอบดำอัตโนมัติ ตามจำนวนบรรทัด
+          const lineHeight = fontSize * 1.5;
+          const totalLines = 2 + addressLines.length; // 2 คือบรรทัดเวลาและพิกัด + บรรทัดที่อยู่ที่ตัดมา
+          const paddingY = fontSize * 1.2;
+          const barHeight = (totalLines * lineHeight) + fontSize;
+          
+          // 🖤 วาดกรอบสีดำทึบด้านล่าง
           ctx.fillStyle = 'rgba(0,0,0,0.65)';
           ctx.fillRect(0, height - barHeight, width, barHeight);
           
-          // 📝 พิมพ์ข้อความ 3 บรรทัด
+          // 📝 พิมพ์ตัวหนังสือสีขาว
           ctx.fillStyle = 'white';
-          ctx.fillText(`🕒 ${timestamp}`, 20, height - barHeight + (fontSize * 1.2));
-          ctx.fillText(`📡 ${gpsText}`, 20, height - barHeight + (fontSize * 2.5));
+          let startY = height - barHeight + paddingY;
           
-          // ตัดคำสถานที่ถ้ามันยาวเกินไป
-          const maxChars = 55;
-          const displayAddress = addressText.length > maxChars ? addressText.substring(0, maxChars) + "..." : addressText;
-          ctx.fillText(`📍 ${displayAddress}`, 20, height - barHeight + (fontSize * 3.8));
+          ctx.fillText(`🕒 ${timestamp}`, 20, startY);
+          startY += lineHeight;
+          
+          ctx.fillText(`📡 ${gpsText}`, 20, startY);
+          startY += lineHeight;
+          
+          // พิมพ์ที่อยู่ (ถ้ามีหลายบรรทัดมันจะวนลูปพิมพ์ไล่ลงมาเรื่อยๆ)
+          addressLines.forEach(line => {
+              ctx.fillText(line, 20, startY);
+              startY += lineHeight;
+          });
           
           resolve(canvas.toDataURL('image/jpeg', 0.6));
         };
@@ -347,7 +393,7 @@ function MainApp() {
       recorded_by_name: currentUser?.username || 'N/A',
       resultDesc: resultOptions.find(r => r.code === resultCode)?.desc,
       location, 
-      addressDetails: currentAddress, // 📌 บันทึกชื่อสถานที่ลง DB ด้วย
+      addressDetails: currentAddress, // บันทึกชื่อสถานที่ด้วย
       photos, 
       taskNote, 
       resultCode
@@ -448,7 +494,7 @@ function MainApp() {
             </div>
             <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-base shadow-lg shadow-blue-200 mt-2 flex items-center justify-center gap-2 active:scale-95 transition-all"><LogIn size={20} /> เข้าสู่ระบบ</button>
           </form>
-          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 32.0</p></div>
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center"><p className="text-[10px] text-gray-400 font-medium">© 2026 Collection System Version 32.1</p></div>
         </div>
       </div>
     );
@@ -774,7 +820,6 @@ function MainApp() {
                 </div>
               )}
               
-              {/* 📸 ปรับปรุง: เพิ่มคำแนะนำให้กดดูรูปเพื่อดาวน์โหลด */}
               {selectedHistoryTask.photos?.length > 0 && (
                 <div className="pt-2">
                   <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">แตะที่รูปภาพเพื่อขยายและดาวน์โหลด</p>
